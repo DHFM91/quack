@@ -797,7 +797,7 @@ function renderView() {
     const lineH = projDist / perp, top = HORIZON - lineH / 2;
     let wx = side === 0 ? P.y + perp * rdy : P.x + perp * rdx; wx -= Math.floor(wx);
     let tx = (wx * TEX) | 0;
-    if ((side === 0 && rdx > 0) || (side === 1 && rdy < 0)) tx = TEX - tx - 1;
+    if ((side === 0 && rdx < 0) || (side === 1 && rdy > 0)) tx = TEX - tx - 1; // keep wall art (EXIT sign) reading left-to-right
     ctx.drawImage(tex[t] || tex[1], tx, 0, 1, TEX, x, top, 1, lineH);
     const shade = Math.min(0.88, perp / 13) + (side ? 0.12 : 0);
     if (shade > 0.02) {
