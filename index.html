@@ -122,21 +122,54 @@ const sfx = {
   die() { tone({ type: 'sawtooth', f0: 300, f1: 40, dur: 1.2, vol: 0.3, filt: 500 }); }
 };
 
-/* ---------------- Music: "Breadline Thrash" ----------------
-   An original chiptune thrash loop played live by a tiny step sequencer:
-   distorted square-wave power chords, palm-muted E chugs, a gallop section,
-   a squealing square lead, and drums. Toggle with N (or the music button). */
-const BPM = 168, SPB = 60 / BPM / 4; // seconds per 16th note
-// guitar steps: number = power chord that many semitones above low E, 'x' = palm-muted low E chug, null = rest
-const RIFF_A = ['x', 'x', 0, null, 'x', 'x', 3, null, 'x', 'x', 5, null, 'x', 6, 5, 3,
-                'x', 'x', 0, null, 'x', 'x', 7, null, 'x', 'x', 8, 7, 5, 3, 1, null];
-const RIFF_B = [0, null, 0, 0, 0, null, 0, 0, 1, null, 1, 1, 1, null, 1, 1,
-                3, null, 3, 3, 5, null, 5, 5, 6, null, 6, 6, 7, null, 8, 7];
-const LEAD_C = [24, null, null, 22, null, null, 19, null, 20, null, 19, 17, null, null, 15, null,
-                24, null, 27, null, 26, null, 24, null, 22, null, 20, 19, 17, null, null, null];
-const FORM = ['C', 'A', 'B', 'C', 'A', 'B']; // opens on the lead so it's audible from the first second
-const SONG_STEPS = FORM.length * 32;
-const music = { on: true, playing: false, step: 0, next: 0, timer: null, nodes: null };
+/* ---------------- Music: three original chiptune thrash songs ----------------
+   Played live by a tiny step sequencer: distorted square-wave power chords,
+   palm-muted E chugs, gallops, a squealing square lead, and drums. Each level
+   picks the next song from a shuffled rotation. Toggle with N (or the music button).
+   Riff steps: number = power chord that many semitones above low E,
+   'x' = palm-muted low E chug, null = rest. Lead steps are semitones above E3. */
+const _ = null;
+const SONGS = [
+  { name: 'BREADLINE THRASH', bpm: 168, form: ['C', 'A', 'B', 'C', 'A', 'B'], parts: {
+    A: { beat: 'rock', riff: ['x', 'x', 0, _, 'x', 'x', 3, _, 'x', 'x', 5, _, 'x', 6, 5, 3,
+                              'x', 'x', 0, _, 'x', 'x', 7, _, 'x', 'x', 8, 7, 5, 3, 1, _] },
+    B: { beat: 'skank', riff: [0, _, 0, 0, 0, _, 0, 0, 1, _, 1, 1, 1, _, 1, 1,
+                               3, _, 3, 3, 5, _, 5, 5, 6, _, 6, 6, 7, _, 8, 7] },
+    C: { beat: 'rock', crash: true, riff: 'A',
+         lead: [24, _, _, 22, _, _, 19, _, 20, _, 19, 17, _, _, 15, _,
+                24, _, 27, _, 26, _, 24, _, 22, _, 20, 19, 17, _, _, _] } } },
+  // fast and frantic: gallops, a chromatic skank and a shred lead
+  { name: 'STALE MILITIA', bpm: 196, form: ['C', 'A', 'B', 'C', 'B', 'A'], parts: {
+    A: { beat: 'gallop', riff: ['x', _, 'x', 'x', 'x', _, 'x', 'x', 3, _, 3, 3, 'x', _, 'x', 'x',
+                                'x', _, 'x', 'x', 'x', _, 'x', 'x', 5, _, 5, 5, 6, _, 5, 3] },
+    B: { beat: 'skank', riff: [0, _, 'x', 0, 1, _, 'x', 1, 3, _, 'x', 3, 1, _, 'x', 1,
+                               0, _, 'x', 0, 7, _, 'x', 7, 6, _, 5, _, 3, _, 1, _] },
+    C: { beat: 'gallop', crash: true, riff: 'A',
+         lead: [24, _, 27, _, 29, _, 27, 24, 31, _, 29, _, 27, _, 24, _,
+                22, _, 24, _, 27, _, 29, 31, 34, _, _, _, 31, _, _, _] } } },
+  // mid-tempo stomp: swaggering chugs, a half-time drop and a melodic lead
+  { name: 'HUNT THE LOAF', bpm: 144, form: ['C', 'A', 'B', 'C', 'A', 'D'], parts: {
+    A: { beat: 'rock', riff: ['x', 'x', _, 'x', 0, _, _, _, 'x', 'x', _, 'x', 3, _, 2, _,
+                              'x', 'x', _, 'x', 0, _, _, _, 5, _, 3, _, 2, _, 0, _] },
+    B: { beat: 'half', riff: [0, _, _, _, _, _, 'x', 'x', 5, _, _, _, 6, _, 5, _,
+                              0, _, _, _, _, _, 'x', 'x', 8, _, 7, _, 5, _, 3, _] },
+    C: { beat: 'rock', crash: true, riff: 'A',
+         lead: [19, _, _, _, 22, _, 24, _, 22, _, 19, _, 17, _, _, _,
+                19, _, _, _, 22, _, 24, _, 27, _, 26, _, 24, _, 22, _] },
+    D: { beat: 'double', crash: true, riff: ['x', 'x', 'x', 'x', 0, _, 'x', 'x', 'x', 'x', 3, _, 'x', 'x', 5, _,
+                                             'x', 'x', 'x', 'x', 0, _, 'x', 'x', 7, _, 6, _, 5, _, 3, _] } } },
+];
+const music = { on: true, playing: false, step: 0, next: 0, timer: null, nodes: null, song: SONGS[0], bag: [], last: -1 };
+function songSteps(S) { return S.form.length * 32; }
+function songSpb(S) { return 60 / S.bpm / 4; } // seconds per 16th note
+function nextSong() { // shuffled rotation: every song plays once before any repeats, never twice in a row
+  if (!music.bag.length) {
+    music.bag = SONGS.map((_, i) => i);
+    for (let i = music.bag.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [music.bag[i], music.bag[j]] = [music.bag[j], music.bag[i]]; }
+    if (music.bag[0] === music.last) music.bag.push(music.bag.shift());
+  }
+  music.last = music.bag.shift(); music.song = SONGS[music.last];
+}
 try { music.on = localStorage.getItem('quack.music') !== 'off'; } catch (e) {}
 const noiseFor = new WeakMap();
 function noiseBuffer(ctx) {
@@ -203,36 +236,40 @@ function drum(N, kind, t) {
     if (snare) { const tg = ctx.createGain(); env(tg, t, 0.002, 0.3, 0.08); tg.connect(N.bus); osc(ctx, 'triangle', 190, t, 0.08, tg); }
   }
 }
-function playStep(N, step, t) {
-  const part = FORM[Math.floor(step / 32) % FORM.length], s = step % 32;
-  const riff = part === 'B' ? RIFF_B : RIFF_A, n = riff[s];
-  if (n === 'x') { guitar(N, 0, t, SPB * 0.85, true); bass(N, 0, t, SPB * 0.85); }
-  else if (n !== null) { guitar(N, n, t, SPB * 1.7, false); bass(N, n, t, SPB * 1.7); }
-  if (part === 'B') { // thrash skank beat: kick on the beat, snare on the off-beat
-    if (s % 4 === 0) drum(N, 'k', t);
-    if (s % 4 === 2) drum(N, 's', t);
-    if (s % 2 === 1) drum(N, 'h', t);
-  } else {
-    if (n === 'x' || s % 4 === 0) drum(N, 'k', t);
-    if (s % 8 === 4) drum(N, 's', t);
-    if (s % 2 === 0) drum(N, 'h', t);
+function playStep(N, S, step, t) {
+  const spb = songSpb(S), name = S.form[Math.floor(step / 32) % S.form.length], P = S.parts[name], s = step % 32;
+  const riff = typeof P.riff === 'string' ? S.parts[P.riff].riff : P.riff, n = riff[s];
+  if (n === 'x') { guitar(N, 0, t, spb * 0.85, true); bass(N, 0, t, spb * 0.85); }
+  else if (n !== null) { guitar(N, n, t, spb * 1.7, false); bass(N, n, t, spb * 1.7); }
+  switch (P.beat) {
+    case 'skank': // thrash skank beat: kick on the beat, snare on the off-beat
+      if (s % 4 === 0) drum(N, 'k', t); if (s % 4 === 2) drum(N, 's', t); if (s % 2 === 1) drum(N, 'h', t); break;
+    case 'gallop': // kicks follow the gallop (da-da-dum)
+      if (s % 4 !== 1) drum(N, 'k', t); if (s % 8 === 4) drum(N, 's', t); if (s % 2 === 0) drum(N, 'h', t); break;
+    case 'half': // half-time drop: snare on beat 3 only
+      if (s % 16 === 0 || s % 16 === 6 || s % 16 === 10) drum(N, 'k', t); if (s % 16 === 8) drum(N, 's', t); if (s % 2 === 0) drum(N, 'h', t); break;
+    case 'double': // double-kick finale
+      if (s % 2 === 0) drum(N, 'k', t); if (s % 8 === 4) drum(N, 's', t); if (s % 4 === 2) drum(N, 'h', t); break;
+    default:
+      if (n === 'x' || s % 4 === 0) drum(N, 'k', t); if (s % 8 === 4) drum(N, 's', t); if (s % 2 === 0) drum(N, 'h', t);
   }
-  if (s === 0 && (part === 'C' || step === 0)) drum(N, 'c', t);
-  if (part === 'C' && LEAD_C[s] !== null) lead(N, LEAD_C[s], t, SPB * 2.6);
+  if (s === 0 && (P.crash || step === 0)) drum(N, 'c', t);
+  if (P.lead && P.lead[s] !== null) lead(N, P.lead[s], t, spb * 2.6);
 }
 function musicTick() {
   if (!AC || !music.playing) return;
   const now = AC.currentTime;
   if (music.next < now - 0.2) music.next = now + 0.05; // tab was asleep: skip ahead instead of bursting
   while (music.next < now + 0.15) {
-    playStep(music.nodes, music.step, music.next);
-    music.next += SPB; music.step = (music.step + 1) % SONG_STEPS;
+    playStep(music.nodes, music.song, music.step, music.next);
+    music.next += songSpb(music.song); music.step = (music.step + 1) % songSteps(music.song);
   }
 }
 function musicStart(restart) {
   if (!AC || !music.on || (music.playing && !restart)) return;
   if (!music.nodes || music.nodes.ctx !== AC) music.nodes = musicNodes(AC, master);
   clearInterval(music.timer);
+  if (restart) nextSong(); // a fresh song from the rotation on every level launch
   music.playing = true; music.step = 0; music.next = AC.currentTime + 0.05;
   music.timer = setInterval(musicTick, 30); musicTick();
 }
@@ -244,11 +281,12 @@ function toggleMusic() {
   msg(music.on ? 'MUSIC ON' : 'MUSIC OFF', 1.5);
 }
 // renders the loop offline (used to make a preview file of the song)
-async function renderMusic(sec) {
+async function renderMusic(sec, idx = 0) {
+  const S = SONGS[idx], SPB = songSpb(S);
   const off = new OfflineAudioContext(1, Math.round(44100 * sec), 44100);
   const out = off.createGain(); out.gain.value = 0.5 * 2.6; out.connect(off.destination); // preview at a listenable level
   const N = musicNodes(off, out);
-  for (let st = 0, t = 0.05; t < sec - 0.2; st++, t += SPB) playStep(N, st % SONG_STEPS, t);
+  for (let st = 0, t = 0.05; t < sec - 0.2; st++, t += SPB) playStep(N, S, st % songSteps(S), t);
   const buf = await off.startRendering(), d = buf.getChannelData(0);
   const pcm = new Int16Array(d.length); for (let i = 0; i < d.length; i++) pcm[i] = Math.max(-1, Math.min(1, d[i])) * 32767;
   let bin = ''; const u8 = new Uint8Array(pcm.buffer); for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
@@ -1750,7 +1788,7 @@ requestAnimationFrame(frame);
 
 // debug hook for automated testing only
 window.__quack = { get state() { return state; }, P, get ducks() { return ducks; }, get items() { return items; },
-  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, renderMusic, get music() { return { on: music.on, playing: music.playing }; }, guidePoint, get input() { return { noLock, locked, everLocked, fireHeld, touchMode }; }, get map() { return { map, mw, mh, fl, props }; }, get lb() { return { score, hiscores, entry, state }; }, setScore(v) { score = v; }, kill() { hurtPlayer(9999); } };
+  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, renderMusic, get music() { return { on: music.on, playing: music.playing, song: music.song.name }; }, guidePoint, get input() { return { noLock, locked, everLocked, fireHeld, touchMode }; }, get map() { return { map, mw, mh, fl, props }; }, get lb() { return { score, hiscores, entry, state }; }, setScore(v) { score = v; }, kill() { hurtPlayer(9999); } };
 })();
 </script>
 </body>
