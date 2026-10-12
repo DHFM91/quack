@@ -301,7 +301,7 @@ let level = 1, levelName = '', fedCount = 0, totalDucks = 0, itemsGot = 0, items
 let state = 'title', stateT = 0, showMap = false;
 const P = { x: 2, y: 2, a: 0, health: 100, ammo: 24, hasKey: false, cd: 0, throwT: 0, bob: 0, moving: false,
             hurtT: 0, grinT: 0, flash: 0, flashCol: '255,0,0', lookDir: 0, lookT: 0, lockMsgT: 0, emptyMsgT: 0 };
-let msgText = '', msgT = 0;
+let msgText = '', msgT = 0, winBy = 'exit', allFedT = 0;
 function msg(t, dur = 3) { msgText = t; msgT = dur; }
 
 const LEVEL_NAMES = ['THE MILL POND', 'FOWL PLAY', 'CRUMB CATACOMBS', 'GOOSE GATE', 'THE QUACKENING', 'MALLARD MANOR',
@@ -546,10 +546,10 @@ function startLevel(lv) {
   level = lv;
   levelName = LEVEL_NAMES[(lv - 1) % LEVEL_NAMES.length];
   P.hasKey = false; P.cd = 0.3; P.throwT = 0; showMap = false;
-  fedCount = 0; levelTime = 0;
+  fedCount = 0; levelTime = 0; allFedT = 0;
   genLevel(lv);
   updateFlow();
-  msg(`M${lv}: ${levelName} - FIND THE KEYCARD (FOLLOW THE MARKER)`, 4);
+  msg(`M${lv}: ${levelName} - FIND THE KEYCARD OR FEED EVERY DUCK`, 4);
 }
 function newGame() { P.health = 100; P.ammo = 24; startLevel(1); }
 
@@ -561,7 +561,7 @@ function hurtPlayer(n) {
 }
 function tryExit() {
   if (P.hasKey) {
-    state = 'intermission'; stateT = 0; sfx.exit(); saveBest(level + 1);
+    winBy = 'exit'; state = 'intermission'; stateT = 0; sfx.exit(); saveBest(level + 1);
   } else if (P.lockMsgT <= 0) {
     msg('LOCKED. YOU NEED THE KEYCARD.', 2.5); sfx.locked(); P.lockMsgT = 1.5;
   }
@@ -580,6 +580,8 @@ function feed(d) {
     d.state = 'fed'; d.fedT = 0; fedCount++;
     sfx.happy(d.type); P.grinT = 1.2;
     msg(`${d.T.name} ${pick(FED_LINES)}`, 2);
+    // feeding every duck wins the level on the spot (after a beat so the last one can fly off)
+    if (fedCount >= totalDucks && allFedT <= 0) { allFedT = 1.4; msg('EVERY DUCK FED! LEVEL CLEAR!', 3); }
   }
 }
 
@@ -607,6 +609,10 @@ function update(dt) {
   if (isPaused()) return;
 
   levelTime += dt;
+  if (allFedT > 0) {
+    allFedT -= dt;
+    if (allFedT <= 0) { winBy = 'fed'; state = 'intermission'; stateT = 0; sfx.exit(); saveBest(level + 1); return; }
+  }
   P.lockMsgT -= dt; P.emptyMsgT -= dt;
   if (P.hurtT > 0) P.hurtT -= dt;
   if (P.grinT > 0) P.grinT -= dt;
@@ -1242,7 +1248,7 @@ function render() {
     const k = Math.min(1, stateT / 0.8);
     drawTitleLogo(14);
     centerText([
-      [`M${level}: ${levelName}`, 58, 8, '#e8d7b8'], ['FINISHED', 72, 8, '#e8d7b8'],
+      [`M${level}: ${levelName}`, 58, 8, '#e8d7b8'], [winBy === 'fed' ? 'EVERY DUCK FED!' : 'FINISHED', 72, 8, winBy === 'fed' ? '#7dbf6a' : '#e8d7b8'],
       [`FED    ${Math.round(fedPct * k)}%`, 98, 8, '#e0362b'],
       [`ITEMS  ${Math.round(itPct * k)}%`, 114, 8, '#e0362b'],
       [`TIME   ${mm}:${ss}`, 130, 8, '#e0362b'],
