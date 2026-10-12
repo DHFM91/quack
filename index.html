@@ -103,7 +103,9 @@ const sfx = {
     tone({ type: 'square', f0: 340, f1: 255, dur: 0.3, vol: v, filt: 650, q: 2 });
     tone({ type: 'sawtooth', f0: 346, f1: 262, dur: 0.3, vol: v * 0.6, filt: 900, q: 3 });
   },
-  call(type, v) { if (type === 'goose') sfx.honk(v); else sfx.quack(DUCKS[type].pitch, v); },
+  call(type, v) { if (type === 'goose') sfx.honk(v); else if (type === 'muscovy') sfx.hiss(v); else sfx.quack(DUCKS[type].pitch, v); },
+  hiss(v = 0.2) { noise(0.45, v, 'bandpass', 3200); tone({ type: 'sawtooth', f0: 140, f1: 90, dur: 0.4, vol: v * 0.3, filt: 400 }); },
+  fwip(v = 0.15) { noise(0.09, v, 'highpass', 3000); tone({ type: 'triangle', f0: 1400, f1: 500, dur: 0.1, vol: v * 0.5 }); },
   throw() { noise(0.12, 0.18, 'highpass', 2200); },
   nom() { for (let i = 0; i < 3; i++) noise(0.05, 0.22, 'lowpass', 800 + i * 150, i * 0.07); },
   happy(type) {
@@ -393,7 +395,10 @@ const DUCKS = {
   duckling: { name: 'DUCKLING', size: 0.42, hunger: 1, speed: 2.5, dmg: 3,  atk: 0.7, r: 0.2,  pitch: 1.8,
               body: '#f6d43c', wing: '#e3b822', breast: '#fae37a', head: '#f6d43c', beak: '#f08a24', feet: '#f08a24', big: true },
   goose:    { name: 'GOOSE',    size: 0.92, hunger: 7, speed: 1.9, dmg: 14, atk: 1.1, r: 0.33, pitch: 0.6,
-              body: '#8a7c6a', wing: '#6b5f50', breast: '#cfc5b4', head: '#1b1b1b', beak: '#4a4a4a', feet: '#2a2a2a', goose: true }
+              body: '#8a7c6a', wing: '#6b5f50', breast: '#cfc5b4', head: '#1b1b1b', beak: '#4a4a4a', feet: '#2a2a2a', goose: true },
+  // miniboss: big black-and-white Muscovy with a warty red face. Hisses, keeps its distance, fires feathers.
+  muscovy:  { name: 'MUSCOVY GUNNER', size: 1.0, hunger: 12, speed: 1.5, dmg: 10, atk: 1.0, r: 0.34, pitch: 0.5,
+              body: '#1f2523', wing: '#2b3d34', breast: '#e9e6df', head: '#f0ede6', beak: '#d98a8a', feet: '#8a7a50', muscovy: true, boss: true }
 };
 function heart(g, x, y, s, col) {
   g.fillStyle = col; g.beginPath();
@@ -408,17 +413,26 @@ function duckFrame(T, pose) {
   // feet
   g.fillStyle = T.feet; ell(g, 25, stepB ? 59 : 61, 6, 2.5); ell(g, 39, stepB ? 61 : 59, 6, 2.5);
   // wings, body, breast
-  g.fillStyle = T.wing; ell(g, 15, 45, 7, 11); ell(g, 49, 45, 7, 11);
+  g.fillStyle = T.wing;
+  if (T.muscovy && pose === 'attack') { ell(g, 9, 36, 9, 15); ell(g, 55, 36, 9, 15); } // wings flared to fire
+  else { ell(g, 15, 45, 7, 11); ell(g, 49, 45, 7, 11); }
   g.fillStyle = T.body; ell(g, 32, 47, 17, 13);
   g.fillStyle = T.breast; ell(g, 32, 45, 11, 9);
+  if (T.muscovy) { g.fillStyle = 'rgba(70,160,110,.35)'; ell(g, 32, 53, 13, 5); g.fillStyle = '#e9e6df'; ell(g, 14, 40, 4, 5); ell(g, 50, 40, 4, 5); }
   let hy, hr;
   if (T.goose) {
     g.fillStyle = T.head; g.fillRect(28, 18, 8, 24); hy = 16; hr = 9;
-  } else { hy = T.big ? 25 : 26; hr = T.big ? 13 : 11; }
+  } else if (T.muscovy) { hy = 23; hr = 12; }
+  else { hy = T.big ? 25 : 26; hr = T.big ? 13 : 11; }
   if (T.ring) { g.fillStyle = '#f4f4f0'; ell(g, 32, hy + 10, 9, 2.4); }
   g.fillStyle = T.head; ell(g, 32, hy, hr, hr);
   if (T.goose) { g.fillStyle = '#f2efe8'; ell(g, 32, hy + 5, 7, 3); }
-  if (!T.goose && !T.big) { g.fillStyle = 'rgba(120,200,160,.35)'; ell(g, 28, hy - 4, 5, 3); } // head sheen
+  if (!T.goose && !T.big && !T.muscovy) { g.fillStyle = 'rgba(120,200,160,.35)'; ell(g, 28, hy - 4, 5, 3); } // head sheen
+  if (T.muscovy) { // the Muscovy's lumpy red face mask and dark crest
+    g.fillStyle = '#1f2523'; ell(g, 32, hy - 11, 6, 3);
+    g.fillStyle = '#c42a20'; ell(g, 26, hy - 1, 6.5, 5.5); ell(g, 38, hy - 1, 6.5, 5.5); ell(g, 32, hy + 3, 6, 4);
+    for (const [bx, by, br, bc] of [[22, hy - 3, 1.6, '#e04a3a'], [42, hy - 3, 1.6, '#e04a3a'], [29, hy + 5, 1.4, '#8e1a14'], [35, hy + 5, 1.4, '#8e1a14'], [24, hy + 2, 1.3, '#8e1a14'], [40, hy + 2, 1.3, '#8e1a14'], [32, hy + 1, 1.5, '#e04a3a']]) { g.fillStyle = bc; ell(g, bx, by, br, br); }
+  }
   // eyes
   const ex = T.goose ? 4 : 5, ey = hy - 2, er = T.goose ? 2 : 2.6;
   const angry = pose.startsWith('angry') || pose === 'attack';
@@ -523,6 +537,13 @@ img.reeds = (() => { const c = mkCanvas(48, 64), g = c.getContext('2d');
     if (rand() < 0.45) { g.fillStyle = '#6b4226'; ell(g, x + lean, 64 - h + 5, 2.2, 5); }
   }
   return c; })();
+img.feather = (() => { const c = mkCanvas(24, 40), g = c.getContext('2d'); // a quill, tilted like it's mid-flight
+  g.translate(12, 20); g.rotate(0.5);
+  g.fillStyle = '#f7f5ee'; ell(g, 0, -3, 5.5, 14);
+  g.fillStyle = '#c9c4b8'; for (let i = -12; i < 10; i += 4) g.fillRect(-5, i, 10, 1);
+  g.fillStyle = '#2b2f2c'; ell(g, 0, -14, 4, 4);
+  g.strokeStyle = '#8a8478'; g.lineWidth = 1.2; g.beginPath(); g.moveTo(0, -16); g.lineTo(0, 17); g.stroke();
+  return c; })();
 img.crumb = (() => { const c = mkCanvas(16, 16), g = c.getContext('2d');
   g.fillStyle = '#9c5a22'; g.beginPath(); g.moveTo(3, 4); g.lineTo(13, 2); g.lineTo(14, 12); g.lineTo(2, 13); g.closePath(); g.fill();
   g.fillStyle = '#f2d49a'; g.fillRect(5, 5, 7, 6);
@@ -545,7 +566,7 @@ function shaded(im, lvl) {
 
 /* ---------------- World state ---------------- */
 let map, mw, mh, seen, flow, flowTile = -1;
-let ducks = [], items = [], proj = [], parts = [];
+let ducks = [], items = [], proj = [], parts = [], feathers = [];
 let level = 1, levelName = '', fedCount = 0, totalDucks = 0, itemsGot = 0, itemsTotal = 0, levelTime = 0;
 let state = 'title', stateT = 0, showMap = false;
 const P = { x: 2, y: 2, a: 0, health: 100, ammo: 24, hasKey: false, cd: 0, throwT: 0, bob: 0, moving: false,
@@ -698,7 +719,7 @@ function genLevel(lv) {
     }
     const i = pick(floors); return [(i % mw) + 0.5, Math.floor(i / mw) + 0.5];
   };
-  ducks = []; items = []; proj = []; parts = [];
+  ducks = []; items = []; proj = []; parts = []; feathers = [];
   const nDucks = Math.min(4 + lv * 2, 26);
   let need = 0;
   for (let k = 0; k < nDucks; k++) {
@@ -709,7 +730,14 @@ function genLevel(lv) {
     ducks.push({ type, T, x, y, z: 0, hunger: T.hunger, state: 'idle', alert: false, t: rand() * 5, atkCd: 0.5, atkT: 0, painT: 0,
                  wa: rand() * 6.28, wt: 0, los: false, losT: rand() * 0.3, quackT: 2 + rand() * 6, moving: false, fedT: 0 });
   }
-  totalDucks = nDucks;
+  { // one Muscovy gunner miniboss per level, waiting well away from the start
+    let far = 0; for (const i of floors) if (dStart[i] < 9999 && dStart[i] > far) far = dStart[i];
+    const [x, y] = spot(Math.max(8, Math.round(far * 0.45)), floors, true);
+    const T = DUCKS.muscovy; need += T.hunger;
+    ducks.push({ type: 'muscovy', T, x, y, z: 0, hunger: T.hunger, state: 'idle', alert: false, t: 0, atkCd: 0.5, atkT: 0, painT: 0,
+                 wa: rand() * 6.28, wt: 0, los: false, losT: 0, quackT: 3, moving: false, fedT: 0, fireT: 1.2, burst: 0, strafe: 1, strafeT: 0 });
+  }
+  totalDucks = ducks.length;
   items.push({ kind: 'key', x: (keyT % mw) + 0.5, y: Math.floor(keyT / mw) + 0.5 });
   const bags = Math.max(3, Math.ceil((need * 1.4 - P.ammo) / 12));
   for (let k = 0; k < bags; k++) { const [x, y] = spot(2, floors, true); items.push({ kind: 'bread', x, y }); }
@@ -872,7 +900,7 @@ function edgeTurn(dt) {
    Ranking: highest level reached first, points break ties. */
 const LB_URL = 'https://json.extendsclass.com/bin/a12a9d4d8385';
 const LB_SIZE = 10, LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ.-!';
-const DUCK_POINTS = { duckling: 100, mallard: 300, goose: 800 };
+const DUCK_POINTS = { duckling: 100, mallard: 300, goose: 800, muscovy: 3000 };
 let score = 0, hiscores = loadHi(), lbOnline = false, lbPending = null, justAdded = null, entry = null, deadChecked = false;
 let bonus = { clear: 0, fed: 0, time: 0 };
 function loadHi() { try { const s = JSON.parse(localStorage.getItem('quack.board')); if (Array.isArray(s)) return cleanBoard(s); } catch (e) {} return []; }
@@ -973,7 +1001,7 @@ function burst(x, y, z, n, col) {
 }
 const FED_LINES = ['SATISFIED!', 'FULL AND HAPPY!', 'QUACK (THANK YOU)', 'NAP TIME!', 'BELLY FULL!', 'HONKED OFF... IN A GOOD WAY'];
 function feed(d) {
-  d.hunger--; d.alert = true; d.painT = 0.22;
+  d.hunger--; d.alert = true; d.painT = d.T.boss ? 0.1 : 0.22;
   sfx.nom();
   if (d.hunger <= 0) {
     d.state = 'fed'; d.fedT = 0; fedCount++;
@@ -1070,6 +1098,7 @@ function update(dt) {
 
   updateFlow();
   updateProjectiles(dt);
+  updateFeathers(dt);
   updateDucks(dt);
   updateParticles(dt);
 
@@ -1109,6 +1138,23 @@ function updateProjectiles(dt) {
     if (p.z <= 0.02) { burst(p.x, p.y, 0.03, 4); proj.splice(i, 1); }
   }
 }
+function fireFeather(d) {
+  const a = Math.atan2(P.y - d.y, P.x - d.x) + (rand() - 0.5) * 0.08, s = 6.5;
+  feathers.push({ x: d.x + Math.cos(a) * 0.4, y: d.y + Math.sin(a) * 0.4, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0 });
+  sfx.fwip(0.2 / (1 + Math.hypot(P.x - d.x, P.y - d.y) * 0.15));
+}
+function updateFeathers(dt) {
+  for (let i = feathers.length - 1; i >= 0; i--) {
+    const f = feathers[i]; f.age += dt;
+    let gone = f.age > 3;
+    for (let s = 0; s < 2 && !gone; s++) {
+      f.x += f.vx * dt / 2; f.y += f.vy * dt / 2;
+      if (tileAt(f.x, f.y) || props.some(q => q.solid && q.kind === 'tree' && Math.hypot(q.x - f.x, q.y - f.y) < 0.25)) gone = true;
+      else if (Math.hypot(f.x - P.x, f.y - P.y) < 0.32) { hurtPlayer(7 + (level >> 2)); gone = true; }
+    }
+    if (gone) feathers.splice(i, 1);
+  }
+}
 function animateDucks(dt) { for (const d of ducks) d.t += dt; }
 function updateDucks(dt) {
   for (let i = ducks.length - 1; i >= 0; i--) {
@@ -1122,7 +1168,10 @@ function updateDucks(dt) {
     const dx = P.x - d.x, dy = P.y - d.y, dist = Math.hypot(dx, dy);
     d.losT -= dt;
     if (d.losT <= 0) { d.losT = 0.15 + rand() * 0.1; d.los = dist < 14 && hasLOS(d.x, d.y, P.x, P.y); }
-    if (!d.alert && d.los && dist < 8.5) { d.alert = true; sfx.call(d.type, 0.22 / (1 + dist * 0.25)); }
+    if (!d.alert && d.los && dist < (T.boss ? 12 : 8.5)) {
+      d.alert = true; sfx.call(d.type, 0.22 / (1 + dist * 0.25));
+      if (T.boss) msg(`A MUSCOVY GUNNER! FEED IT ${d.hunger} SLICES`, 3.5);
+    }
     if (d.alert && dist > 24) d.alert = false;
 
     // ambient quacking
@@ -1148,6 +1197,18 @@ function updateDucks(dt) {
       }
       const ddx = tx - d.x, ddy = ty - d.y, dd = Math.hypot(ddx, ddy);
       if (dist > 0.62 && dd > 0.01) { mvx = ddx / dd; mvy = ddy / dd; }
+      if (T.boss && d.los && dist < 13) {
+        const ux = dx / dist, uy = dy / dist;
+        d.strafeT -= dt; if (d.strafeT <= 0) { d.strafeT = 1.2 + rand() * 1.8; d.strafe = rand() < .5 ? -1 : 1; }
+        const range = dist > 6.5 ? 1 : dist < 3.5 ? -1 : 0;
+        mvx = ux * range - uy * d.strafe * 0.8; mvy = uy * range + ux * d.strafe * 0.8;
+        d.fireT -= dt;
+        if (d.fireT <= 0) {
+          if (d.burst <= 0) d.burst = 1 + (level >= 4 ? 1 : 0) + (level >= 8 ? 1 : 0);
+          fireFeather(d); d.burst--; d.atkT = 0.35;
+          d.fireT = d.burst > 0 ? 0.18 : Math.max(0.8, 1.7 - level * 0.06) + rand() * 0.5;
+        }
+      }
       // attack
       d.atkCd -= dt;
       if (dist < 0.72 && d.los && d.atkCd <= 0) { d.atkCd = T.atk; d.atkT = 0.3; hurtPlayer(T.dmg); }
@@ -1273,6 +1334,7 @@ function renderView() {
     addS(duckImg[d.type][pose], d.x, d.y, d.T.size, d.z + swim, d.state === 'fed');
   }
   for (const p of proj) addS(img.crumb, p.x, p.y, 0.12, p.z - 0.06, true);
+  for (const f of feathers) addS(img.feather, f.x, f.y, 0.3, 0.3, true);
   for (const p of props) addS(img[p.kind], p.x, p.y, p.kind === 'tree' ? 1.5 : p.kind === 'reeds' ? 0.6 : p.kind === 'bush' ? 0.45 : 0.4, 0);
   list.sort((a, b) => b.tY - a.tY);
   for (const s of list) drawSprite(s);
@@ -1545,6 +1607,15 @@ function render() {
   if (state === 'dead') { ctx.fillStyle = `rgba(120,0,0,${Math.min(0.6, stateT * 0.5)})`; ctx.fillRect(0, 0, W, VIEW_H); }
   if (showMap && state === 'play') drawMap();
   drawBar();
+  { // miniboss hunger bar while the Muscovy is after you
+    const boss = ducks.find(d => d.T.boss && d.state !== 'fed' && d.alert);
+    if (boss && state === 'play' && !showMap) {
+      const bw = 120, bx0 = Math.round((W - bw) / 2), by0 = 44;
+      txt('MUSCOVY GUNNER', W / 2, by0, 8, '#ff5a4a', 'center');
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(bx0 - 1, by0 + 10, bw + 2, 6);
+      ctx.fillStyle = '#ff5a4a'; ctx.fillRect(bx0, by0 + 11, Math.round(bw * boss.hunger / boss.T.hunger), 4);
+    }
+  }
   if (msgT > 0 && state === 'play' && !showMap) txt(msgText, 4, 4, 8, '#e8d7b8');
   if (state === 'play' && !showMap && msgT <= 0) txt(`SCORE ${score}`, W - 4, 4, 8, '#ffcf4a', 'right');
   if (isPaused()) {
