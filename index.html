@@ -119,6 +119,135 @@ const sfx = {
   die() { tone({ type: 'sawtooth', f0: 300, f1: 40, dur: 1.2, vol: 0.3, filt: 500 }); }
 };
 
+/* ---------------- Music: "Breadline Thrash" ----------------
+   An original chiptune thrash loop played live by a tiny step sequencer:
+   distorted square-wave power chords, palm-muted E chugs, a gallop section,
+   a squealing square lead, and drums. Toggle with N (or the music button). */
+const BPM = 168, SPB = 60 / BPM / 4; // seconds per 16th note
+// guitar steps: number = power chord that many semitones above low E, 'x' = palm-muted low E chug, null = rest
+const RIFF_A = ['x', 'x', 0, null, 'x', 'x', 3, null, 'x', 'x', 5, null, 'x', 6, 5, 3,
+                'x', 'x', 0, null, 'x', 'x', 7, null, 'x', 'x', 8, 7, 5, 3, 1, null];
+const RIFF_B = [0, null, 0, 0, 0, null, 0, 0, 1, null, 1, 1, 1, null, 1, 1,
+                3, null, 3, 3, 5, null, 5, 5, 6, null, 6, 6, 7, null, 8, 7];
+const LEAD_C = [24, null, null, 22, null, null, 19, null, 20, null, 19, 17, null, null, 15, null,
+                24, null, 27, null, 26, null, 24, null, 22, null, 20, 19, 17, null, null, null];
+const FORM = ['A', 'A', 'B', 'A', 'C', 'B'];
+const SONG_STEPS = FORM.length * 32;
+const music = { on: true, playing: false, step: 0, next: 0, timer: null, nodes: null };
+try { music.on = localStorage.getItem('quack.music') !== 'off'; } catch (e) {}
+const noiseFor = new WeakMap();
+function noiseBuffer(ctx) {
+  let b = noiseFor.get(ctx);
+  if (!b) { b = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate); const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; noiseFor.set(ctx, b); }
+  return b;
+}
+function musicNodes(ctx, out) {
+  const bus = ctx.createGain(); bus.gain.value = 0.17;          // reasonable, low background level
+  const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -18; comp.ratio.value = 4;
+  bus.connect(comp); comp.connect(out);
+  const shaper = ctx.createWaveShaper(); const n = 1024, curve = new Float32Array(n), k = 30;
+  for (let i = 0; i < n; i++) { const x = i * 2 / n - 1; curve[i] = (1 + k) * x / (1 + k * Math.abs(x)); }
+  shaper.curve = curve;
+  const cab = ctx.createBiquadFilter(); cab.type = 'lowpass'; cab.frequency.value = 3200;
+  const gtrOut = ctx.createGain(); gtrOut.gain.value = 0.32;
+  shaper.connect(cab); cab.connect(gtrOut); gtrOut.connect(bus);
+  return { ctx, bus, shaper };
+}
+function env(g, t, a, peak, dur) {
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a);
+  g.gain.exponentialRampToValueAtTime(peak * 0.6, t + dur * 0.6); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+}
+function osc(ctx, type, f, t, dur, dest, detune = 0) {
+  const o = ctx.createOscillator(); o.type = type; o.frequency.setValueAtTime(f, t); o.detune.value = detune;
+  o.connect(dest); o.start(t); o.stop(t + dur + 0.02); return o;
+}
+function guitar(N, semi, t, dur, mute) {
+  const ctx = N.ctx, f = 82.41 * Math.pow(2, semi / 12);
+  const g = ctx.createGain(); env(g, t, 0.004, mute ? 0.9 : 0.7, dur);
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mute ? 650 : 2400;
+  g.connect(lp); lp.connect(N.shaper);
+  osc(ctx, 'square', f, t, dur, g, -7); osc(ctx, 'square', f, t, dur, g, 7);  // root, double-tracked
+  osc(ctx, 'square', f * 1.5, t, dur, g); if (!mute) osc(ctx, 'square', f * 2, t, dur, g); // fifth + octave
+}
+function bass(N, semi, t, dur) {
+  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.004, 0.55, dur); g.connect(N.bus);
+  osc(ctx, 'triangle', 41.2 * Math.pow(2, semi / 12), t, dur, g);
+}
+function lead(N, semi, t, dur) {
+  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.01, 0.16, dur); g.connect(N.bus);
+  const f = 164.8 * Math.pow(2, semi / 12);
+  const o = osc(ctx, 'square', f, t, dur, g);
+  const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 6; lg.gain.value = f * 0.012; // vibrato
+  lfo.connect(lg); lg.connect(o.frequency); lfo.start(t + 0.08); lfo.stop(t + dur);
+}
+function drum(N, kind, t) {
+  const ctx = N.ctx;
+  if (kind === 'k') {
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.14); g.connect(N.bus);
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
+    o.connect(g); o.start(t); o.stop(t + 0.16);
+  } else {
+    const s = ctx.createBufferSource(); s.buffer = noiseBuffer(ctx);
+    const f = ctx.createBiquadFilter(), g = ctx.createGain();
+    const snare = kind === 's', crash = kind === 'c';
+    f.type = snare ? 'bandpass' : 'highpass'; f.frequency.value = snare ? 1800 : crash ? 5000 : 8000;
+    const len = snare ? 0.16 : crash ? 0.9 : 0.04, vol = snare ? 0.55 : crash ? 0.25 : 0.18;
+    g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.001, t + len);
+    s.connect(f); f.connect(g); g.connect(N.bus); s.start(t); s.stop(t + len + 0.02);
+    if (snare) { const tg = ctx.createGain(); env(tg, t, 0.002, 0.3, 0.08); tg.connect(N.bus); osc(ctx, 'triangle', 190, t, 0.08, tg); }
+  }
+}
+function playStep(N, step, t) {
+  const part = FORM[Math.floor(step / 32) % FORM.length], s = step % 32;
+  const riff = part === 'B' ? RIFF_B : RIFF_A, n = riff[s];
+  if (n === 'x') { guitar(N, 0, t, SPB * 0.85, true); bass(N, 0, t, SPB * 0.85); }
+  else if (n !== null) { guitar(N, n, t, SPB * 1.7, false); bass(N, n, t, SPB * 1.7); }
+  if (part === 'B') { // thrash skank beat: kick on the beat, snare on the off-beat
+    if (s % 4 === 0) drum(N, 'k', t);
+    if (s % 4 === 2) drum(N, 's', t);
+    if (s % 2 === 1) drum(N, 'h', t);
+  } else {
+    if (n === 'x' || s % 4 === 0) drum(N, 'k', t);
+    if (s % 8 === 4) drum(N, 's', t);
+    if (s % 2 === 0) drum(N, 'h', t);
+  }
+  if (s === 0 && (part === 'C' || step === 0)) drum(N, 'c', t);
+  if (part === 'C' && LEAD_C[s] !== null) lead(N, LEAD_C[s], t, SPB * 2.6);
+}
+function musicTick() {
+  if (!AC || !music.playing) return;
+  const now = AC.currentTime;
+  if (music.next < now - 0.2) music.next = now + 0.05; // tab was asleep: skip ahead instead of bursting
+  while (music.next < now + 0.15) {
+    playStep(music.nodes, music.step, music.next);
+    music.next += SPB; music.step = (music.step + 1) % SONG_STEPS;
+  }
+}
+function musicStart() {
+  if (!AC || music.playing || !music.on) return;
+  if (!music.nodes || music.nodes.ctx !== AC) music.nodes = musicNodes(AC, master);
+  music.playing = true; music.step = 0; music.next = AC.currentTime + 0.08;
+  music.timer = setInterval(musicTick, 30); musicTick();
+}
+function musicStop() { music.playing = false; clearInterval(music.timer); }
+function toggleMusic() {
+  music.on = !music.on;
+  try { localStorage.setItem('quack.music', music.on ? 'on' : 'off'); } catch (e) {}
+  if (music.on) { audio(); musicStart(); } else musicStop();
+  msg(music.on ? 'MUSIC ON' : 'MUSIC OFF', 1.5);
+}
+// renders the loop offline (used to make a preview file of the song)
+async function renderMusic(sec) {
+  const off = new OfflineAudioContext(1, Math.round(44100 * sec), 44100);
+  const out = off.createGain(); out.gain.value = 0.5 * 2.6; out.connect(off.destination); // preview at a listenable level
+  const N = musicNodes(off, out);
+  for (let st = 0, t = 0.05; t < sec - 0.2; st++, t += SPB) playStep(N, st % SONG_STEPS, t);
+  const buf = await off.startRendering(), d = buf.getChannelData(0);
+  const pcm = new Int16Array(d.length); for (let i = 0; i < d.length; i++) pcm[i] = Math.max(-1, Math.min(1, d[i])) * 32767;
+  let bin = ''; const u8 = new Uint8Array(pcm.buffer); for (let i = 0; i < u8.length; i += 8192) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 8192));
+  return btoa(bin);
+}
+
 /* ---------------- Wall textures ---------------- */
 function pixTex(fn) {
   const c = mkCanvas(TEX, TEX), g = c.getContext('2d'), img = g.createImageData(TEX, TEX), d = img.data;
@@ -458,6 +587,7 @@ window.addEventListener('keydown', e => {
   if (!keys[e.code]) {
     if (e.code === 'Space' || e.code === 'Enter' || e.code === 'ControlLeft' || e.code === 'ControlRight') pressedEdge = true;
     if ((e.code === 'Tab' || e.code === 'KeyM') && state === 'play') showMap = !showMap;
+    if (e.code === 'KeyN') toggleMusic();
   }
   keys[e.code] = true; audio();
 });
@@ -469,6 +599,7 @@ function ovRect() { return { w: ov.clientWidth, h: ov.clientHeight }; }
 function stickHome(side) { const { w, h } = ovRect(); return { x: side < 0 ? 36 + STICK_R : w - 36 - STICK_R, y: h - 44 - STICK_R }; }
 function fireBtn() { const { w } = ovRect(); const r = Math.min(46, w * 0.12), s = stickHome(1); return { x: s.x - 18, y: s.y - STICK_R - r - 22, r }; }
 function mapBtn() { const { w } = ovRect(); return { x: w - 34, y: 34, r: 22 }; }
+function musicBtn() { const { w } = ovRect(); return { x: w - 86, y: 34, r: 22 }; }
 
 ov.addEventListener('contextmenu', e => e.preventDefault());
 ov.addEventListener('pointerdown', e => {
@@ -487,6 +618,8 @@ ov.addEventListener('pointerdown', e => {
   if (state !== 'play') { pressedEdge = true; return; }
   const fb = fireBtn(), mb = mapBtn();
   if (Math.hypot(e.clientX - mb.x, e.clientY - mb.y) < mb.r + 8) { showMap = !showMap; return; }
+  const nb = musicBtn();
+  if (Math.hypot(e.clientX - nb.x, e.clientY - nb.y) < nb.r + 6) { toggleMusic(); return; }
   if (Math.hypot(e.clientX - fb.x, e.clientY - fb.y) < fb.r + 10) { fireT.id = e.pointerId; fireHeld = true; return; }
   // a new finger always takes over its side, so a lost touch can never leave a control stuck
   if (e.clientX < ovRect().w / 2) { joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0; return; }
@@ -598,7 +731,7 @@ function update(dt) {
 
   if (state === 'title') {
     P.a += dt * 0.25; animateDucks(dt);
-    if (edge && stateT > 0.3) { audio(); newGame(); state = 'play'; stateT = 0; }
+    if (edge && stateT > 0.3) { audio(); newGame(); state = 'play'; stateT = 0; musicStart(); }
     return;
   }
   if (state === 'intermission') {
@@ -1106,7 +1239,7 @@ function render() {
       ['FEED THEM. ALL OF THEM.', 78, 8, '#e8d7b8'],
       [blink ? (touchMode || isTouchDevice ? 'TAP TO START' : 'CLICK TO START') : '', 112, 8, '#ffcf4a'],
       [isTouchDevice ? 'LEFT STICK MOVE  RIGHT STICK LOOK' : 'WASD MOVE  MOUSE LOOK  CLICK THROW', 140, 8, '#9c8a72'],
-      [isTouchDevice ? 'MAP BUTTON: AUTOMAP' : 'SHIFT RUN  TAB AUTOMAP', 154, 8, '#9c8a72'],
+      [isTouchDevice ? 'TOP BUTTONS: MAP / MUSIC' : 'SHIFT RUN  TAB MAP  N MUSIC', 154, 8, '#9c8a72'],
       [best > 1 ? `BEST: LEVEL ${best}` : '', 176, 8, '#7dbf6a']
     ]);
     return;
@@ -1172,6 +1305,9 @@ function drawTouch() {
   octx.globalAlpha = 0.95; octx.fillStyle = '#2b1a0c'; octx.font = `10px ${FONT}`; octx.textAlign = 'center'; octx.textBaseline = 'middle';
   octx.fillText('THROW', fb.x, fb.y);
   // map button
+  const nb = musicBtn();
+  octx.globalAlpha = music.on ? 0.45 : 0.2; octx.fillStyle = '#e8d7b8'; octx.beginPath(); octx.arc(nb.x, nb.y, nb.r, 0, 6.283); octx.fill();
+  octx.globalAlpha = 0.95; octx.fillStyle = '#2b1a0c'; octx.font = `7px ${FONT}`; octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillText(music.on ? 'MUS' : 'OFF', nb.x, nb.y + 1);
   const mb = mapBtn();
   octx.globalAlpha = 0.45; octx.fillStyle = '#e8d7b8'; octx.beginPath(); octx.arc(mb.x, mb.y, mb.r, 0, 6.283); octx.fill();
   octx.globalAlpha = 0.95; octx.fillStyle = '#2b1a0c'; octx.font = `8px ${FONT}`; octx.fillText('MAP', mb.x, mb.y + 1);
@@ -1218,7 +1354,7 @@ requestAnimationFrame(frame);
 
 // debug hook for automated testing only
 window.__quack = { get state() { return state; }, P, get ducks() { return ducks; }, get items() { return items; },
-  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, guidePoint, get input() { return { noLock, locked, everLocked, fireHeld, touchMode }; }, get map() { return { map, mw, mh }; } };
+  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, renderMusic, get music() { return { on: music.on, playing: music.playing }; }, guidePoint, get input() { return { noLock, locked, everLocked, fireHeld, touchMode }; }, get map() { return { map, mw, mh }; } };
 })();
 </script>
 </body>
