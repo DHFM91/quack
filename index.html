@@ -1170,7 +1170,6 @@ function updateDucks(dt) {
     if (d.losT <= 0) { d.losT = 0.15 + rand() * 0.1; d.los = dist < 14 && hasLOS(d.x, d.y, P.x, P.y); }
     if (!d.alert && d.los && dist < (T.boss ? 12 : 8.5)) {
       d.alert = true; sfx.call(d.type, 0.22 / (1 + dist * 0.25));
-      if (T.boss) msg(`A MUSCOVY GUNNER! FEED IT ${d.hunger} SLICES`, 3.5);
     }
     if (d.alert && dist > 24) d.alert = false;
 
@@ -1607,15 +1606,6 @@ function render() {
   if (state === 'dead') { ctx.fillStyle = `rgba(120,0,0,${Math.min(0.6, stateT * 0.5)})`; ctx.fillRect(0, 0, W, VIEW_H); }
   if (showMap && state === 'play') drawMap();
   drawBar();
-  { // miniboss hunger bar while the Muscovy is after you
-    const boss = ducks.find(d => d.T.boss && d.state !== 'fed' && d.alert);
-    if (boss && state === 'play' && !showMap) {
-      const bw = 120, bx0 = Math.round((W - bw) / 2), by0 = 44;
-      txt('MUSCOVY GUNNER', W / 2, by0, 8, '#ff5a4a', 'center');
-      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(bx0 - 1, by0 + 10, bw + 2, 6);
-      ctx.fillStyle = '#ff5a4a'; ctx.fillRect(bx0, by0 + 11, Math.round(bw * boss.hunger / boss.T.hunger), 4);
-    }
-  }
   if (msgT > 0 && state === 'play' && !showMap) txt(msgText, 4, 4, 8, '#e8d7b8');
   if (state === 'play' && !showMap && msgT <= 0) txt(`SCORE ${score}`, W - 4, 4, 8, '#ffcf4a', 'right');
   if (isPaused()) {
