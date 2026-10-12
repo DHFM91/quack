@@ -131,7 +131,7 @@ const RIFF_B = [0, null, 0, 0, 0, null, 0, 0, 1, null, 1, 1, 1, null, 1, 1,
                 3, null, 3, 3, 5, null, 5, 5, 6, null, 6, 6, 7, null, 8, 7];
 const LEAD_C = [24, null, null, 22, null, null, 19, null, 20, null, 19, 17, null, null, 15, null,
                 24, null, 27, null, 26, null, 24, null, 22, null, 20, 19, 17, null, null, null];
-const FORM = ['A', 'A', 'B', 'A', 'C', 'B'];
+const FORM = ['C', 'A', 'B', 'C', 'A', 'B']; // opens on the lead so it's audible from the first second
 const SONG_STEPS = FORM.length * 32;
 const music = { on: true, playing: false, step: 0, next: 0, timer: null, nodes: null };
 try { music.on = localStorage.getItem('quack.music') !== 'off'; } catch (e) {}
@@ -164,17 +164,20 @@ function osc(ctx, type, f, t, dur, dest, detune = 0) {
 function guitar(N, semi, t, dur, mute) {
   const ctx = N.ctx, f = 82.41 * Math.pow(2, semi / 12);
   const g = ctx.createGain(); env(g, t, 0.004, mute ? 0.9 : 0.7, dur);
-  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mute ? 650 : 2400;
+  const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = mute ? 1400 : 2800;
   g.connect(lp); lp.connect(N.shaper);
   osc(ctx, 'square', f, t, dur, g, -7); osc(ctx, 'square', f, t, dur, g, 7);  // root, double-tracked
   osc(ctx, 'square', f * 1.5, t, dur, g); if (!mute) osc(ctx, 'square', f * 2, t, dur, g); // fifth + octave
+  // clean chiptune layer two octaves up so the riff cuts through small phone/laptop speakers
+  const cg = ctx.createGain(); env(cg, t, 0.003, mute ? 0.15 : 0.18, dur * (mute ? 1 : 0.8)); cg.connect(N.bus);
+  osc(ctx, 'square', f * 4, t, dur, cg); osc(ctx, 'square', f * 6, t, dur, cg);
 }
 function bass(N, semi, t, dur) {
-  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.004, 0.55, dur); g.connect(N.bus);
+  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.004, 0.32, dur); g.connect(N.bus);
   osc(ctx, 'triangle', 41.2 * Math.pow(2, semi / 12), t, dur, g);
 }
 function lead(N, semi, t, dur) {
-  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.01, 0.16, dur); g.connect(N.bus);
+  const ctx = N.ctx, g = ctx.createGain(); env(g, t, 0.01, 0.2, dur); g.connect(N.bus);
   const f = 164.8 * Math.pow(2, semi / 12);
   const o = osc(ctx, 'square', f, t, dur, g);
   const lfo = ctx.createOscillator(), lg = ctx.createGain(); lfo.frequency.value = 6; lg.gain.value = f * 0.012; // vibrato
@@ -183,7 +186,7 @@ function lead(N, semi, t, dur) {
 function drum(N, kind, t) {
   const ctx = N.ctx;
   if (kind === 'k') {
-    const g = ctx.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.14); g.connect(N.bus);
+    const g = ctx.createGain(); g.gain.setValueAtTime(0.6, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.14); g.connect(N.bus);
     const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(42, t + 0.12);
     o.connect(g); o.start(t); o.stop(t + 0.16);
   } else {
@@ -223,10 +226,11 @@ function musicTick() {
     music.next += SPB; music.step = (music.step + 1) % SONG_STEPS;
   }
 }
-function musicStart() {
-  if (!AC || music.playing || !music.on) return;
+function musicStart(restart) {
+  if (!AC || !music.on || (music.playing && !restart)) return;
   if (!music.nodes || music.nodes.ctx !== AC) music.nodes = musicNodes(AC, master);
-  music.playing = true; music.step = 0; music.next = AC.currentTime + 0.08;
+  clearInterval(music.timer);
+  music.playing = true; music.step = 0; music.next = AC.currentTime + 0.05;
   music.timer = setInterval(musicTick, 30); musicTick();
 }
 function musicStop() { music.playing = false; clearInterval(music.timer); }
@@ -686,6 +690,7 @@ function startLevel(lv) {
   fedCount = 0; levelTime = 0; allFedT = 0;
   genLevel(lv);
   updateFlow();
+  audio(); musicStart(true); // song kicks off from the top on every level launch
   msg(`M${lv}: ${levelName} - FIND THE KEYCARD OR FEED EVERY DUCK`, 4);
 }
 function newGame() { P.health = 100; P.ammo = 24; startLevel(1); }
@@ -731,7 +736,7 @@ function update(dt) {
 
   if (state === 'title') {
     P.a += dt * 0.25; animateDucks(dt);
-    if (edge && stateT > 0.3) { audio(); newGame(); state = 'play'; stateT = 0; musicStart(); }
+    if (edge && stateT > 0.3) { audio(); newGame(); state = 'play'; stateT = 0; }
     return;
   }
   if (state === 'intermission') {
