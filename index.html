@@ -878,6 +878,7 @@ const HAND_R = 'data:image/webp;base64,UklGRnAoAABXRUJQVlA4WAoAAAAQAAAAUwEAmgEAQ
 const handL = new Image(), handR = new Image();
 handL.src = HAND_L; handR.src = HAND_R;
 const hv = document.getElementById('hands'), hctx = hv.getContext('2d');
+let handDrop = 0;
 function drawHand(img, cx, bottom, height, rot, pivotY) {
   if (!img.complete || !img.naturalWidth) return;
   const w = height * img.naturalWidth / img.naturalHeight;
@@ -900,7 +901,9 @@ function drawHands() {
     else if (t < 0.55) { const k = (t - 0.3) / 0.25; tx = -0.04 + 0.2 * k; ty = 0.06 - 0.16 * k; rot = -0.1 + 0.3 * k; }
     else { const e = 1 - (t - 0.55) / 0.45; tx = 0.16 * e; ty = -0.1 * e; rot = 0.2 * e; }
   }
-  const low = has ? 0 : h * 0.32; // out of bread: hands drop away
+  handDrop += ((has ? 0 : 1) - handDrop) * 0.15; // out of bread: hands slide fully off screen
+  if (handDrop > 0.98) return;
+  const low = handDrop * h * 1.2;
   // sizes and offsets are in view-heights so the layout holds on any screen shape
   drawHand(handL, w / 2 - h * 0.25 + bx + tx * h + shake, h * 1.04 + by + ty * h + low, h * 0.46, rot, 0.85);
   drawHand(handR, w / 2 + h * 0.27 - bx + shake, h * 1.04 + by * 0.8 + low, h * 0.66, 0, 0.9);
