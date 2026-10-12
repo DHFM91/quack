@@ -15,11 +15,13 @@
     -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
   }
   #game { position: absolute; image-rendering: pixelated; image-rendering: crisp-edges; }
+  #hands { position: absolute; pointer-events: none; }
   #touch { position: absolute; left: 0; top: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<canvas id="hands"></canvas>
 <canvas id="touch"></canvas>
 <script>
 (() => {
@@ -361,6 +363,7 @@ function genLevel(lv) {
   cand.sort((a, b) => b.score - a.score);
   const ex = cand[0];
   map[ex.door] = 9;
+  keyTile = keyT; exitTile = ex.floor; exitDoor = ex.door; guideTarget = -1; guide = null;
 
   seen = new Uint8Array(mw * mh);
   flow = new Int16Array(mw * mh);
@@ -440,11 +443,14 @@ function hasLOS(x0, y0, x1, y1) {
 
 /* ---------------- Input ---------------- */
 const keys = {};
-let fireHeld = false, pressedEdge = false, touchMode = false, noLock = false, locked = false;
+let fireHeld = false, pressedEdge = false, touchMode = false, noLock = false, locked = false, everLocked = false;
 const joy = { id: null, ox: 0, oy: 0, x: 0, y: 0 };
 const look = { id: null, lx: 0 };
 const fireT = { id: null };
-let dragLook = { on: false, lx: 0 };
+// Free-look fallback for browsers/frames where mouse lock isn't allowed:
+// just move the mouse to look (no button needed); resting near a screen edge keeps turning.
+const mouse = { inside: false, x: 0.5, lastX: null };
+const LOCK_SENS = 0.0026, FREE_SENS = 0.0045, EDGE_ZONE = 0.12, EDGE_TURN = 2.0;
 
 window.addEventListener('keydown', e => {
   if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab'].includes(e.code)) e.preventDefault();
@@ -455,7 +461,7 @@ window.addEventListener('keydown', e => {
   keys[e.code] = true; audio();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
-window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; fireHeld = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; fireHeld = false; joy.id = null; joy.x = joy.y = 0; look.id = null; });
 
 function ovRect() { return { w: ov.clientWidth, h: ov.clientHeight }; }
 function fireBtn() { const { w, h } = ovRect(); const r = Math.min(54, w * 0.13); return { x: w - r - 26, y: h - r - 34, r }; }
@@ -467,10 +473,10 @@ ov.addEventListener('pointerdown', e => {
   e.preventDefault();
   if (e.pointerType === 'mouse') {
     touchMode = false;
+    mouse.inside = true; mouse.lastX = e.clientX;
     if (state !== 'play') { pressedEdge = true; requestLock(); return; }
-    if (!locked && !noLock) { requestLock(); return; }
+    if (!noLock && !locked) { requestLock(); return; } // click to resume after Esc
     if (e.button === 0) fireHeld = true;
-    if (noLock && e.button === 2) dragLook = { on: true, lx: e.clientX };
     return;
   }
   touchMode = true;
@@ -479,12 +485,16 @@ ov.addEventListener('pointerdown', e => {
   const fb = fireBtn(), mb = mapBtn();
   if (Math.hypot(e.clientX - mb.x, e.clientY - mb.y) < mb.r + 8) { showMap = !showMap; return; }
   if (Math.hypot(e.clientX - fb.x, e.clientY - fb.y) < fb.r + 10) { fireT.id = e.pointerId; fireHeld = true; return; }
-  if (e.clientX < ovRect().w / 2 && joy.id === null) { joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0; return; }
-  if (look.id === null) { look.id = e.pointerId; look.lx = e.clientX; }
+  // a new finger always takes over its side, so a lost touch can never leave a control stuck
+  if (e.clientX < ovRect().w / 2) { joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0; return; }
+  look.id = e.pointerId; look.lx = e.clientX;
 });
 ov.addEventListener('pointermove', e => {
   if (e.pointerType === 'mouse') {
-    if (noLock && dragLook.on) { P.a += (e.clientX - dragLook.lx) * 0.006; dragLook.lx = e.clientX; }
+    mouse.inside = true;
+    mouse.x = e.clientX / Math.max(1, ov.clientWidth);
+    if (!locked && noLock && state === 'play' && mouse.lastX !== null) P.a += clamp(e.clientX - mouse.lastX, -120, 120) * FREE_SENS;
+    mouse.lastX = e.clientX;
     return;
   }
   if (e.pointerId === joy.id) {
@@ -492,30 +502,44 @@ ov.addEventListener('pointermove', e => {
     if (m > R) { dx *= R / m; dy *= R / m; }
     joy.x = dx / R; joy.y = dy / R;
   } else if (e.pointerId === look.id) {
-    if (state === 'play') P.a += (e.clientX - look.lx) * 0.0065;
+    if (state === 'play') P.a += clamp(e.clientX - look.lx, -80, 80) * 0.0065;
     look.lx = e.clientX;
   }
 });
+ov.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { mouse.inside = false; mouse.lastX = null; } });
 function endPointer(e) {
-  if (e.pointerType === 'mouse') { if (e.button === 0) fireHeld = false; if (e.button === 2) dragLook.on = false; return; }
+  if (e.pointerType === 'mouse') { if (e.button === 0) fireHeld = false; return; }
   if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; }
   if (e.pointerId === look.id) look.id = null;
   if (e.pointerId === fireT.id) { fireT.id = null; fireHeld = false; }
 }
 ov.addEventListener('pointerup', endPointer);
 ov.addEventListener('pointercancel', endPointer);
+ov.addEventListener('lostpointercapture', endPointer);
+// releasing the mouse button anywhere (even outside the game) always stops throwing
+window.addEventListener('mouseup', e => { if (e.button === 0) fireHeld = false; });
 document.addEventListener('mousemove', e => {
-  if (locked && state === 'play') P.a += e.movementX * 0.0026;
+  if (locked && state === 'play') P.a += clamp(e.movementX || 0, -150, 150) * LOCK_SENS;
 });
+function lockFailed() { if (!everLocked) noLock = true; } // never had lock here: switch to free look for good
 function requestLock() {
-  if (noLock || touchMode) return;
+  if (touchMode || noLock || locked) return;
+  if (!ov.requestPointerLock) { noLock = true; return; }
   try {
-    const p = ov.requestPointerLock && ov.requestPointerLock();
-    if (p && p.catch) p.catch(() => { noLock = true; });
-  } catch (_) { noLock = true; }
+    const p = ov.requestPointerLock();
+    if (p && p.catch) p.catch(lockFailed);
+  } catch (_) { lockFailed(); }
 }
-document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === ov; if (!locked) fireHeld = false; });
-document.addEventListener('pointerlockerror', () => { noLock = true; });
+document.addEventListener('pointerlockchange', () => {
+  locked = document.pointerLockElement === ov;
+  if (locked) everLocked = true; else fireHeld = false;
+});
+document.addEventListener('pointerlockerror', lockFailed);
+function edgeTurn(dt) {
+  if (touchMode || !noLock || !mouse.inside) return;
+  if (mouse.x < EDGE_ZONE) P.a -= EDGE_TURN * dt * (1 - mouse.x / EDGE_ZONE);
+  else if (mouse.x > 1 - EDGE_ZONE) P.a += EDGE_TURN * dt * (1 - (1 - mouse.x) / EDGE_ZONE);
+}
 
 /* ---------------- Game flow ---------------- */
 function startLevel(lv) {
@@ -525,7 +549,7 @@ function startLevel(lv) {
   fedCount = 0; levelTime = 0;
   genLevel(lv);
   updateFlow();
-  msg(`M${lv}: ${levelName} - FIND THE KEYCARD`, 4);
+  msg(`M${lv}: ${levelName} - FIND THE KEYCARD (FOLLOW THE MARKER)`, 4);
 }
 function newGame() { P.health = 100; P.ammo = 24; startLevel(1); }
 
@@ -591,6 +615,7 @@ function update(dt) {
   // turning
   const turn = (keys.ArrowRight || keys.KeyE ? 1 : 0) - (keys.ArrowLeft || keys.KeyQ ? 1 : 0);
   P.a += turn * 2.6 * dt;
+  edgeTurn(dt);
   // movement
   let f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0);
   let s = (keys.KeyD ? 1 : 0) - (keys.KeyA ? 1 : 0);
@@ -839,36 +864,245 @@ function drawSprite(s) {
   }
 }
 
-function drawWeapon() {
+/* ---------------- Hi-res hands ----------------
+   Drawn on their own full-resolution canvas over the chunky pixel world
+   (like the classic photo-hands-in-Quake look). Art is authored in a
+   400x400 design space and rendered once per screen size. */
+const SKIN = { base: '#dea27c', light: '#f4c9a6', shade: '#b8775a', deep: '#8a5139', nail: '#f7d6c6' };
+function limb(g, pts, r) {
+  const path = () => { g.beginPath(); g.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]); };
+  g.save(); g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = SKIN.deep; g.lineWidth = r * 2 + 3; path(); g.stroke();
+  g.strokeStyle = SKIN.shade; g.lineWidth = r * 2; path(); g.stroke();
+  g.translate(-r * 0.16, -r * 0.2); g.strokeStyle = SKIN.base; g.lineWidth = r * 1.5; path(); g.stroke();
+  g.translate(-r * 0.16, -r * 0.18); g.globalAlpha = 0.55; g.strokeStyle = SKIN.light; g.lineWidth = r * 0.65; path(); g.stroke();
+  g.restore();
+  // knuckle creases at the inner joints
+  g.save(); g.strokeStyle = 'rgba(120,70,50,.45)'; g.lineWidth = 1.6; g.lineCap = 'round';
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, y] = pts[i], [px, py] = pts[i - 1], a = Math.atan2(y - py, x - px) + Math.PI / 2;
+    g.beginPath(); g.moveTo(x + Math.cos(a) * r * 0.45, y + Math.sin(a) * r * 0.45); g.lineTo(x - Math.cos(a) * r * 0.1, y - Math.sin(a) * r * 0.1); g.stroke();
+  }
+  g.restore();
+}
+function nail(g, pts, r) {
+  const n = pts.length, [x, y] = pts[n - 1], [px, py] = pts[n - 2], a = Math.atan2(y - py, x - px);
+  g.save(); g.translate(x - Math.cos(a) * r * 0.35 - r * 0.15, y - Math.sin(a) * r * 0.35 - r * 0.2); g.rotate(a);
+  g.fillStyle = SKIN.nail; g.beginPath(); g.ellipse(0, 0, r * 0.6, r * 0.5, 0, 0, 6.283); g.fill();
+  g.strokeStyle = 'rgba(150,90,70,.5)'; g.lineWidth = 1.2; g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.45)'; g.beginPath(); g.ellipse(-r * 0.1, -r * 0.18, r * 0.3, r * 0.14, 0, 0, 6.283); g.fill();
+  g.restore();
+}
+function finger(g, pts, r) { limb(g, pts, r); nail(g, pts, r); }
+function palm(g, x, y, rx, ry, rot) {
+  g.save(); g.translate(x, y); g.rotate(rot);
+  const gr = g.createRadialGradient(-rx * 0.3, -ry * 0.4, 2, 0, 0, Math.max(rx, ry) * 1.05);
+  gr.addColorStop(0, SKIN.light); gr.addColorStop(0.5, SKIN.base); gr.addColorStop(1, SKIN.shade);
+  g.fillStyle = gr; g.beginPath(); g.ellipse(0, 0, rx, ry, 0, 0, 6.283); g.fill();
+  g.strokeStyle = 'rgba(138,81,57,.6)'; g.lineWidth = 2; g.stroke();
+  g.restore();
+}
+function forearm(g, a, b, c, d) { // a,b = bottom edge (left,right); c,d = wrist edge (right,left)
+  const gr = g.createLinearGradient(a[0], a[1], b[0], b[1]);
+  gr.addColorStop(0, SKIN.shade); gr.addColorStop(0.35, SKIN.light); gr.addColorStop(0.7, SKIN.base); gr.addColorStop(1, SKIN.deep);
+  g.fillStyle = gr; g.beginPath(); g.moveTo(...a); g.lineTo(...b); g.lineTo(...c); g.lineTo(...d); g.closePath(); g.fill();
+  // fine arm hair / skin texture
+  g.save(); g.clip(); g.strokeStyle = 'rgba(110,70,45,.18)'; g.lineWidth = 1;
+  for (let i = 0; i < 70; i++) {
+    const t = Math.random(), s = Math.random();
+    const x = a[0] + (b[0] - a[0]) * s + (d[0] - a[0]) * t, y = a[1] + (b[1] - a[1]) * s + (d[1] - a[1]) * t;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + 4, y - 5); g.stroke();
+  }
+  g.restore();
+}
+function slicePath(g, cx, cy, w, h) {
+  const x0 = cx - w / 2, x1 = cx + w / 2, yb = cy + h / 2, ys = cy - h / 2 + h * 0.3, yt = cy - h / 2;
+  g.beginPath();
+  g.moveTo(x0 + 14, yb); g.lineTo(x1 - 14, yb); g.quadraticCurveTo(x1, yb, x1, yb - 14);
+  g.lineTo(x1 + w * 0.02, ys);
+  g.bezierCurveTo(x1 + w * 0.14, yt + h * 0.02, x1 - w * 0.2, yt - h * 0.06, cx, yt + h * 0.07);
+  g.bezierCurveTo(x0 + w * 0.2, yt - h * 0.06, x0 - w * 0.14, yt + h * 0.02, x0 - w * 0.02, ys);
+  g.lineTo(x0, yb - 14); g.quadraticCurveTo(x0, yb, x0 + 14, yb); g.closePath();
+}
+function crumbFace(g, cx, cy, w, h) {
+  const gr = g.createLinearGradient(cx, cy - h / 2, cx, cy + h / 2);
+  gr.addColorStop(0, '#f8ead0'); gr.addColorStop(1, '#ead2a0');
+  slicePath(g, cx, cy, w, h); g.fillStyle = gr; g.fill();
+  g.save(); slicePath(g, cx, cy, w, h); g.clip();
+  for (let i = 0; i < 420; i++) { // crumb pores
+    const x = cx - w / 2 + Math.random() * w, y = cy - h / 2 + Math.random() * h, r = 0.6 + Math.random() * 2.2;
+    g.fillStyle = Math.random() < 0.75 ? `rgba(196,150,90,${0.25 + Math.random() * 0.4})` : 'rgba(255,250,235,.7)';
+    g.beginPath(); g.ellipse(x, y, r * (1 + Math.random()), r, Math.random() * 3, 0, 6.283); g.fill();
+  }
+  const edge = g.createRadialGradient(cx, cy, Math.min(w, h) * 0.25, cx, cy, Math.max(w, h) * 0.62);
+  edge.addColorStop(0, 'rgba(0,0,0,0)'); edge.addColorStop(1, 'rgba(150,95,40,.35)');
+  g.fillStyle = edge; g.fillRect(cx - w, cy - h, w * 2, h * 2);
+  g.restore();
+}
+function breadSlice(g, cx, cy, w, h, rot) {
+  g.save(); g.translate(cx, cy); g.rotate(rot);
+  // soft shadow, crust, then the crumb face inset inside it
+  g.fillStyle = 'rgba(0,0,0,.25)'; slicePath(g, 6, 8, w, h); g.fill();
+  const cr = g.createLinearGradient(0, -h / 2, 0, h / 2);
+  cr.addColorStop(0, '#9a5a22'); cr.addColorStop(0.5, '#b8762f'); cr.addColorStop(1, '#a8682a');
+  slicePath(g, 0, 0, w, h); g.fillStyle = cr; g.fill();
+  g.strokeStyle = '#6e3c16'; g.lineWidth = 2.5; g.stroke();
+  crumbFace(g, 0, 4, w - 22, h - 20);
+  g.restore();
+}
+function breadLoaf(g, cx, cy, w, h) {
+  // extruded sandwich loaf: stacked crust layers from back to front, then the cut face
+  const steps = 26, ox = 62, oy = -40;
+  for (let i = steps; i >= 1; i--) {
+    const t = i / steps;
+    const k = 0.62 + 0.38 * (1 - t);
+    g.fillStyle = `rgb(${Math.round(150 * k + 30)},${Math.round(92 * k + 12)},${Math.round(40 * k)})`;
+    slicePath(g, cx + ox * t, cy + oy * t, w, h); g.fill();
+  }
+  // glossy top crust highlight along the back edge
+  g.save(); g.globalAlpha = 0.35; g.strokeStyle = '#f0b56a'; g.lineWidth = 6; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(cx - w * 0.3 + ox * 0.5, cy - h * 0.52 + oy * 0.5); g.lineTo(cx + w * 0.25 + ox * 0.95, cy - h * 0.5 + oy * 0.95); g.stroke(); g.restore();
+  // front crust ring + cut face
+  slicePath(g, cx, cy, w, h); g.fillStyle = '#b06b2b'; g.fill(); g.strokeStyle = '#6e3c16'; g.lineWidth = 2.5; g.stroke();
+  crumbFace(g, cx, cy + 3, w - 18, h - 16);
+}
+function makeLeftHand(px, withBread) {
+  const c = mkCanvas(px, Math.round(px * 1.4)), g = c.getContext('2d'); g.scale(px / 400, px / 400);
+  const fingers = [[[248, 300], [296, 262], [324, 236]], [[252, 318], [304, 288], [332, 264]], [[252, 336], [304, 312], [330, 292]], [[248, 352], [294, 336], [318, 320]]];
+  if (withBread) {
+    for (const f of fingers) finger(g, f, 15);           // fingertips curl round the back edge
+    breadSlice(g, 214, 196, 200, 214, -0.1);
+  } else {
+    for (const f of fingers) finger(g, [f[0], [f[1][0] - 18, f[1][1] - 10], [f[1][0] - 26, f[1][1] + 14]], 15); // loose fist
+  }
+  forearm(g, [-90, 560], [90, 560], [250, 330], [168, 292]); // runs well past the bottom so tilting never shows its end
+  palm(g, 226, 318, 66, 46, -0.55);
+  const thumb = [[186, 318], [204, 268], [228, 238]];
+  finger(g, thumb, 17);
+  return c;
+}
+function makeRightHand(px, withBread) {
+  const c = mkCanvas(px, Math.round(px * 1.4)), g = c.getContext('2d'); g.scale(px / 400, px / 400);
+  if (withBread) breadLoaf(g, 170, 200, 200, 196);
+  forearm(g, [330, 560], [500, 560], [330, 300], [232, 322]);
+  palm(g, 236, 316, 74, 50, 0.45);
+  const fingers = withBread
+    ? [[[208, 296], [158, 284], [128, 258]], [[212, 314], [156, 310], [120, 288]], [[214, 332], [160, 336], [124, 318]], [[216, 348], [168, 360], [136, 348]]]
+    : [[[208, 296], [176, 270], [182, 248]], [[212, 314], [176, 296], [178, 272]], [[214, 332], [180, 322], [180, 300]], [[216, 348], [186, 346], [186, 326]]];
+  for (const f of fingers) finger(g, f, 15);
+  finger(g, [[288, 302], [304, 252], [292, 222]], 17);
+  return c;
+}
+const hv = document.getElementById('hands'), hctx = hv.getContext('2d');
+let handSprites = null, handPx = 0;
+function buildHands(px) {
+  handPx = px;
+  handSprites = { L: makeLeftHand(px, true), Le: makeLeftHand(px, false), R: makeRightHand(px, true), Re: makeRightHand(px, false) };
+}
+function drawHand(img, x, y, size, rot) {
+  hctx.save(); hctx.translate(x + size / 2, y + size / 2); hctx.rotate(rot); hctx.drawImage(img, -size / 2, -size / 2, size, size * img.height / img.width); hctx.restore();
+}
+function drawHands() {
+  const w = hv.width, h = hv.height;
+  hctx.clearRect(0, 0, w, h);
+  if (state !== 'play' || showMap || !handSprites) return;
+  const S = handPx, has = P.ammo > 0;
+  const bx = Math.sin(P.bob) * S * 0.022, by = Math.abs(Math.cos(P.bob)) * S * 0.03;
+  const shake = P.hurtT > 0 ? (Math.random() - 0.5) * S * 0.03 : 0;
+  // throw animation on the left hand: wind up, flick forward, recover
   const t = P.throwT > 0 ? P.throwT / 0.3 : 0;
-  const ox = Math.sin(P.bob) * 4, oy = Math.abs(Math.cos(P.bob)) * 3;
-  let ax = 0, ay = 0, showBread = P.ammo > 0;
+  let tx = 0, ty = 0, rot = 0, sc = 1;
   if (t > 0) {
-    if (t < 0.3) { const k = t / 0.3; ax = k * 6; ay = k * 10; }
-    else if (t < 0.55) { const k = (t - 0.3) / 0.25; ax = 6 - k * 20; ay = 10 - k * 26; if (k > 0.5) showBread = false; }
-    else { const k = (t - 0.55) / 0.45; ax = -14 * (1 - k); ay = (1 - k) * 34; }
+    if (t < 0.3) { const k = t / 0.3; tx = -0.05 * k; ty = 0.07 * k; rot = -0.12 * k; }
+    else if (t < 0.55) { const k = (t - 0.3) / 0.25; tx = -0.05 + 0.25 * k; ty = 0.07 - 0.2 * k; rot = -0.12 + 0.4 * k; sc = 1 - 0.1 * k; }
+    else { const e = 1 - (t - 0.55) / 0.45; tx = 0.2 * e; ty = -0.13 * e; rot = 0.28 * e; sc = 1 - 0.1 * e; }
   }
-  const bx = Math.round(W / 2 + 14 + ox + ax), by = Math.round(VIEW_H - 40 + oy + ay);
-  // sleeve
-  ctx.fillStyle = '#3d5a2a';
-  ctx.beginPath(); ctx.moveTo(bx + 2, by + 30); ctx.lineTo(bx + 26, by + 26); ctx.lineTo(bx + 46, VIEW_H + 4); ctx.lineTo(bx + 10, VIEW_H + 4); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#2c4220'; ctx.fillRect(bx + 4, by + 27, 22, 3);
-  // bread slice
-  if (showBread) {
-    ctx.fillStyle = '#8f5220';
-    ctx.fillRect(bx - 4, by + 4, 32, 22); ell(ctx, bx + 4, by + 5, 10, 8); ell(ctx, bx + 20, by + 5, 10, 8);
-    ctx.fillStyle = '#f0d49a';
-    ctx.fillRect(bx - 1, by + 6, 26, 18); ell(ctx, bx + 4, by + 6, 7.5, 6); ell(ctx, bx + 20, by + 6, 7.5, 6);
-    ctx.fillStyle = '#d9b878';
-    for (const [hx, hy] of [[3, 8], [12, 4], [19, 11], [7, 16], [16, 19], [22, 6]]) ctx.fillRect(bx + hx, by + hy, 2, 1);
+  const low = has ? 0 : S * 0.1;
+  const ls = S * sc;
+  drawHand(handSprites[has ? 'L' : 'Le'], w / 2 - S * 1.02 + bx + tx * S + shake + (S - ls) / 2, h - S * 0.8 + by + ty * S + low, ls, rot);
+  drawHand(handSprites[has ? 'R' : 'Re'], w / 2 + S * 0.08 - bx + shake, h - S * 0.78 + by * 0.8 + low, S, 0);
+  // tint the hands red with the damage flash so they sit in the scene
+  if (P.flash > 0 && P.flashCol === '255,0,0') {
+    hctx.save(); hctx.globalCompositeOperation = 'source-atop';
+    hctx.fillStyle = `rgba(255,0,0,${Math.min(0.35, P.flash * 0.7)})`; hctx.fillRect(0, 0, w, h); hctx.restore();
   }
-  // hand
-  ctx.fillStyle = '#d9a27a'; ell(ctx, bx + 14, by + 26, 13, 7);
-  ctx.fillStyle = '#c48c64';
-  for (let i = 0; i < 4; i++) ctx.fillRect(bx + 4 + i * 6, by + 21, 5, 5);
-  ctx.fillStyle = '#d9a27a';
-  for (let i = 0; i < 4; i++) ctx.fillRect(bx + 4 + i * 6, by + 20, 4, 5);
-  ell(ctx, bx - 1, by + 22, 4, 6); // thumb
+}
+/* ---------------- Objective compass ----------------
+   A subtle strip at the top of the view. The marker follows the real route
+   (not a straight line through walls) to the keycard, then to the exit. */
+let keyTile = -1, exitTile = -1, exitDoor = -1, guide = null, guideTarget = -1;
+function updateGuide() {
+  const tgt = P.hasKey ? exitTile : keyTile;
+  if (tgt !== guideTarget && tgt >= 0) { guideTarget = tgt; guide = bfs(tgt); }
+}
+function clearLOS(x0, y0, x1, y1) { // line of sight wide enough for the player's body, so the marker never cuts corners
+  const dx = x1 - x0, dy = y1 - y0, d = Math.hypot(dx, dy) || 1, nx = -dy / d * 0.26, ny = dx / d * 0.26;
+  return hasLOS(x0, y0, x1, y1) && hasLOS(x0 + nx, y0 + ny, x1 + nx, y1 + ny) && hasLOS(x0 - nx, y0 - ny, x1 - nx, y1 - ny);
+}
+function tileCenter(i) { return [(i % mw) + 0.5, Math.floor(i / mw) + 0.5]; }
+function guidePoint() {
+  updateGuide();
+  if (!guide) return null;
+  let t = (P.y | 0) * mw + (P.x | 0);
+  if (guide[t] >= 9999) return null;
+  const [gx, gy] = tileCenter(guideTarget);
+  const final = P.hasKey ? tileCenter(exitDoor) : [gx, gy];
+  if (clearLOS(P.x, P.y, gx, gy)) return { pt: final, dist: guide[t] };
+  // walk the route ahead and aim at the furthest waypoint still in view
+  let aim = null;
+  for (let step = 0; step < 14 && guide[t] > 0; step++) {
+    let nt = -1;
+    for (const n of [t + 1, t - 1, t + mw, t - mw]) if (!map[n] && guide[n] < guide[t]) { nt = n; break; }
+    if (nt < 0) break;
+    t = nt;
+    const c = tileCenter(t);
+    if (!aim || clearLOS(P.x, P.y, c[0], c[1])) aim = c; else break;
+  }
+  return aim ? { pt: aim, dist: guide[(P.y | 0) * mw + (P.x | 0)] } : null;
+}
+function drawCompass() {
+  if (state !== 'play' || showMap || !map) return;
+  updateGuide();
+  const gp = guidePoint(); if (!gp) return;
+  const w = hv.width, h = hv.height, u = h / 100, g = hctx;
+  let rel = Math.atan2(gp.pt[1] - P.y, gp.pt[0] - P.x) - P.a;
+  rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+  const half = Math.min(w * 0.22, u * 46), cx = w / 2, cy = u * 14, span = Math.PI * 0.6;
+  g.save();
+  // faint bar with sliding heading ticks
+  const bar = g.createLinearGradient(cx - half, 0, cx + half, 0);
+  bar.addColorStop(0, 'rgba(232,215,184,0)'); bar.addColorStop(0.2, 'rgba(232,215,184,.35)');
+  bar.addColorStop(0.8, 'rgba(232,215,184,.35)'); bar.addColorStop(1, 'rgba(232,215,184,0)');
+  g.fillStyle = bar; g.fillRect(cx - half, cy - 1, half * 2, Math.max(1, u * 0.35));
+  g.fillStyle = 'rgba(232,215,184,.35)';
+  for (let k = -8; k <= 8; k++) {
+    const hd = Math.round(P.a / (Math.PI / 4)) * (Math.PI / 4) + k * Math.PI / 4;
+    let r = hd - P.a; r = Math.atan2(Math.sin(r), Math.cos(r));
+    if (Math.abs(r) > span) continue;
+    const x = cx + r / span * half, fade = 1 - Math.abs(r) / span;
+    g.globalAlpha = fade; g.fillRect(x - 0.5 * u * 0.3, cy - u * 1.2, u * 0.3, u * 2.4);
+  }
+  g.globalAlpha = 1;
+  // your heading notch
+  g.fillStyle = 'rgba(232,215,184,.6)';
+  g.beginPath(); g.moveTo(cx, cy + u * 1.6); g.lineTo(cx - u * 1.1, cy + u * 3); g.lineTo(cx + u * 1.1, cy + u * 3); g.closePath(); g.fill();
+  // objective marker
+  const off = Math.abs(rel) > span, k = clamp(rel / span, -1, 1), mx = cx + k * half;
+  const col = P.hasKey ? '#ff4a3a' : '#f5c518', onTarget = Math.abs(rel) < 0.12;
+  g.globalAlpha = onTarget ? 0.95 : 0.75;
+  g.fillStyle = col; g.strokeStyle = 'rgba(0,0,0,.6)'; g.lineWidth = Math.max(1, u * 0.3);
+  const s = u * 2.2;
+  if (off) { // chevron at the edge pointing the way to turn
+    const d = Math.sign(rel);
+    g.beginPath(); g.moveTo(mx + d * s * 1.2, cy); g.lineTo(mx - d * s * 0.4, cy - s); g.lineTo(mx - d * s * 0.4, cy + s); g.closePath(); g.fill(); g.stroke();
+  } else {
+    g.beginPath(); g.moveTo(mx, cy - s); g.lineTo(mx + s, cy); g.lineTo(mx, cy + s); g.lineTo(mx - s, cy); g.closePath(); g.fill(); g.stroke();
+  }
+  g.font = `${Math.max(8, Math.round(u * 2.6))}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'top';
+  const label = `${P.hasKey ? 'EXIT' : 'KEY'} ${gp.dist}m`;
+  g.fillStyle = 'rgba(0,0,0,.7)'; g.fillText(label, mx + 1, cy + s + u * 0.9 + 1);
+  g.fillStyle = col; g.fillText(label, mx, cy + s + u * 0.9);
+  g.restore();
 }
 
 function txt(s, x, y, size, col, align = 'left', shadow = true) {
@@ -985,7 +1219,6 @@ function render() {
     ]);
     return;
   }
-  drawWeapon();
   if (P.flash > 0) { ctx.fillStyle = `rgba(${P.flashCol},${Math.min(0.45, P.flash)})`; ctx.fillRect(0, 0, W, VIEW_H); }
   if (state === 'dead') { ctx.fillStyle = `rgba(120,0,0,${Math.min(0.6, stateT * 0.5)})`; ctx.fillRect(0, 0, W, VIEW_H); }
   if (showMap && state === 'play') drawMap();
@@ -1060,6 +1293,11 @@ function resize() {
   floorGrad = ctx.createLinearGradient(0, HORIZON, 0, VIEW_H);
   floorGrad.addColorStop(0, '#1a140f'); floorGrad.addColorStop(1, '#55432f');
   const dpr = window.devicePixelRatio || 1;
+  const vh = ch * VIEW_H / H;
+  hv.style.left = cv.style.left; hv.style.top = cv.style.top; hv.style.width = cw + 'px'; hv.style.height = vh + 'px';
+  hv.width = Math.round(cw * dpr); hv.height = Math.round(vh * dpr);
+  const px = Math.round(Math.min(hv.height * 0.72, hv.width * 0.34));
+  if (!handSprites || Math.abs(px - handPx) > handPx * 0.08) buildHands(px);
   ov.width = Math.round(iw * dpr); ov.height = Math.round(ih * dpr);
 }
 window.addEventListener('resize', resize);
@@ -1070,6 +1308,8 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000); last = now;
   update(dt);
   render();
+  drawHands();
+  drawCompass();
   drawTouch();
   requestAnimationFrame(frame);
 }
@@ -1080,7 +1320,7 @@ requestAnimationFrame(frame);
 
 // debug hook for automated testing only
 window.__quack = { get state() { return state; }, P, get ducks() { return ducks; }, get items() { return items; },
-  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, get map() { return { map, mw, mh }; } };
+  start() { newGame(); state = 'play'; stateT = 0; noLock = true; }, startLevel, guidePoint, get input() { return { noLock, locked, everLocked, fireHeld, touchMode }; }, get map() { return { map, mw, mh }; } };
 })();
 </script>
 </body>
