@@ -854,8 +854,7 @@ function ovRect() { return { w: ov.clientWidth, h: ov.clientHeight }; }
 // resting spots for the two sticks; THROW sits just above the look stick, under the right thumb
 function stickHome(side) { const { w, h } = ovRect(); return { x: side < 0 ? 36 + STICK_R : w - 36 - STICK_R, y: h - 44 - STICK_R }; }
 function fireBtn() { const { w } = ovRect(); const r = Math.min(46, w * 0.12), s = stickHome(1); return { x: s.x - 18, y: s.y - STICK_R - r - 22, r }; }
-function mapBtn() { const { w } = ovRect(); return { x: w - 34, y: 34, r: 22 }; }
-function musicBtn() { const { w } = ovRect(); return { x: w - 86, y: 34, r: 22 }; }
+function musicBtn() { const { w } = ovRect(); return { x: w - 34, y: 34, r: 22 }; }
 
 ov.addEventListener('contextmenu', e => e.preventDefault());
 ov.addEventListener('pointerdown', e => {
@@ -873,8 +872,7 @@ ov.addEventListener('pointerdown', e => {
   try { ov.setPointerCapture(e.pointerId); } catch (_) {}
   if (state === 'initials' && e.clientX < ovRect().w / 2) { joy.id = e.pointerId; joy.ox = e.clientX; joy.oy = e.clientY; joy.x = 0; joy.y = 0; return; }
   if (state !== 'play') { pressedEdge = true; return; }
-  const fb = fireBtn(), mb = mapBtn();
-  if (Math.hypot(e.clientX - mb.x, e.clientY - mb.y) < mb.r + 8) { showMap = !showMap; return; }
+  const fb = fireBtn();
   const nb = musicBtn();
   if (Math.hypot(e.clientX - nb.x, e.clientY - nb.y) < nb.r + 6) { toggleMusic(); return; }
   if (Math.hypot(e.clientX - fb.x, e.clientY - fb.y) < fb.r + 10) { fireT.id = e.pointerId; fireHeld = true; return; }
@@ -1651,7 +1649,7 @@ function render() {
       ['FEED THEM. ALL OF THEM.', 78, 8, '#e8d7b8'],
       [blink ? (touchMode || isTouchDevice ? 'TAP TO START' : 'CLICK TO START') : '', 112, 8, '#ffcf4a'],
       [isTouchDevice ? 'LEFT STICK MOVE  RIGHT STICK LOOK' : 'WASD MOVE  MOUSE LOOK  CLICK THROW', 140, 8, '#9c8a72'],
-      [isTouchDevice ? 'TOP BUTTONS: MAP / MUSIC' : 'SHIFT RUN  TAB MAP  N MUSIC', 154, 8, '#9c8a72'],
+      [isTouchDevice ? 'MAP BELOW  TOP BUTTON: MUSIC' : 'SHIFT RUN  TAB MAP  N MUSIC', 154, 8, '#9c8a72'],
       [hiscores[0] ? `TOP: ${hiscores[0][0]}  LVL ${hiscores[0][2]}  ${hiscores[0][1]}` : best > 1 ? `BEST: LEVEL ${best}` : '', 176, 8, '#7dbf6a']
     ]);
     return;
@@ -1756,10 +1754,64 @@ function drawTouch() {
   const nb = musicBtn();
   octx.globalAlpha = music.on ? 0.45 : 0.2; octx.fillStyle = '#e8d7b8'; octx.beginPath(); octx.arc(nb.x, nb.y, nb.r, 0, 6.283); octx.fill();
   octx.globalAlpha = 0.95; octx.fillStyle = '#2b1a0c'; octx.font = `7px ${FONT}`; octx.textAlign = 'center'; octx.textBaseline = 'middle'; octx.fillText(music.on ? 'MUS' : 'OFF', nb.x, nb.y + 1);
-  const mb = mapBtn();
-  octx.globalAlpha = 0.45; octx.fillStyle = '#e8d7b8'; octx.beginPath(); octx.arc(mb.x, mb.y, mb.r, 0, 6.283); octx.fill();
-  octx.globalAlpha = 0.95; octx.fillStyle = '#2b1a0c'; octx.font = `8px ${FONT}`; octx.fillText('MAP', mb.x, mb.y + 1);
   octx.globalAlpha = 1;
+  drawMiniMap();
+}
+/* Always-on minimap for touch screens: fills the biggest free area around the controls
+   (below the view in portrait; between the sticks in landscape). Not interactive. */
+let mmCanvas = null, mmT = 0;
+function miniMapRect() {
+  const { w, h } = ovRect(), r = cv.getBoundingClientRect();
+  const ar = mw / mh, home = stickHome(-1), fb = fireBtn();
+  const fit = (x0, y0, x1, y1) => { // largest map-shaped box centred in a region
+    let bw = x1 - x0, bh = y1 - y0; if (bw < 40 || bh < 40) return null;
+    if (bw / bh > ar) bw = bh * ar; else bh = bw / ar;
+    return { x: (x0 + x1 - bw) / 2, y: (y0 + y1 - bh) / 2, w: bw, h: bh };
+  };
+  const top = r.bottom + 10;
+  const below = fit(12, top, w - 12, Math.min(home.y, fb.y) - STICK_R - 10);     // band under the view, above the controls
+  const between = fit(home.x + STICK_R + 14, Math.max(top, h * 0.45), w - (home.x + STICK_R + 14), h - 10); // gap between the sticks
+  const area = b => b ? b.w * b.h : 0;
+  const best = area(below) >= area(between) ? below : between;
+  if (area(best) >= 110 * 110) return best;
+  // landscape: no spare room, so tuck a small translucent map into the top-left corner of the view
+  const sz = Math.min(h * 0.3, 150);
+  return fit(r.left + 10, r.top + 34, r.left + 10 + sz * Math.max(1, ar), r.top + 34 + sz);
+}
+function drawMiniMap() {
+  if (!map || showMap) return;
+  const R = miniMapRect(); if (!R) return;
+  const now = performance.now();
+  if (!mmCanvas || mmCanvas.width !== mw || mmCanvas.height !== mh) { mmCanvas = document.createElement('canvas'); mmCanvas.width = mw; mmCanvas.height = mh; mmT = 0; }
+  if (now - mmT > 250) { // redraw the explored tiles a few times a second
+    mmT = now;
+    const g = mmCanvas.getContext('2d'), id = g.createImageData(mw, mh), d = id.data;
+    const hex = c => [parseInt(c.slice(1, 3), 16), parseInt(c.slice(3, 5), 16), parseInt(c.slice(5, 7), 16)];
+    const cols = { 1: '#4f8a3a', 2: '#2f6a2a', 3: '#9a9a90', 4: '#8a5a30', 5: '#a04a3a', 9: '#ff3b2f' };
+    const fcols = [0, '#24401f', '#6a5c44', '#2a5f8a', '#5e4228', '#55534d'];
+    for (let i = 0; i < mw * mh; i++) {
+      if (!seen[i]) continue;
+      const [r, gg, b] = hex(map[i] ? cols[map[i]] || '#888888' : fcols[fl[i]] || '#2a2420');
+      d[i * 4] = r; d[i * 4 + 1] = gg; d[i * 4 + 2] = b; d[i * 4 + 3] = 255;
+    }
+    g.putImageData(id, 0, 0);
+  }
+  const c = octx, s = R.w / mw;
+  c.save();
+  const corner = R.w * R.h < 110 * 110 * 1.6 && R.y < cv.getBoundingClientRect().bottom;
+  c.globalAlpha = corner ? 0.35 : 0.55; c.fillStyle = '#000'; c.fillRect(R.x - 4, R.y - 4, R.w + 8, R.h + 8);
+  c.globalAlpha = corner ? 0.7 : 0.95; c.imageSmoothingEnabled = false; c.drawImage(mmCanvas, R.x, R.y, R.w, R.h);
+  for (const it of items) if (it.kind === 'key' && seen[(it.y | 0) * mw + (it.x | 0)]) {
+    c.fillStyle = '#f5c518'; c.fillRect(R.x + it.x * s - 3, R.y + it.y * s - 3, 6, 6);
+  }
+  const px = R.x + P.x * s, py = R.y + P.y * s, a = Math.max(5, s * 1.4);
+  c.fillStyle = '#7dff6a'; c.strokeStyle = '#000'; c.lineWidth = 1.5;
+  c.beginPath();
+  c.moveTo(px + Math.cos(P.a) * a * 1.3, py + Math.sin(P.a) * a * 1.3);
+  c.lineTo(px + Math.cos(P.a + 2.5) * a, py + Math.sin(P.a + 2.5) * a);
+  c.lineTo(px + Math.cos(P.a - 2.5) * a, py + Math.sin(P.a - 2.5) * a);
+  c.closePath(); c.fill(); c.stroke();
+  c.restore();
 }
 
 /* ---------------- Layout ---------------- */
