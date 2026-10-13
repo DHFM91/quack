@@ -427,15 +427,17 @@ const sky = (() => {
 let floorBuf = null, floor32 = null;
 
 /* ---------------- Duck types & sprites ---------------- */
+// stand: how close each duck comes before pecking. Small ducks stop further out so they stay
+// visible above the hands instead of slipping underneath you.
 const DUCKS = {
-  mallard:  { name: 'MALLARD',  size: 0.62, hunger: 3, speed: 1.7, dmg: 6,  atk: 0.9, r: 0.28, pitch: 1.0,
+  mallard:  { name: 'MALLARD',  size: 0.62, hunger: 3, speed: 1.7, dmg: 6,  atk: 0.9, r: 0.28, stand: 1.35, pitch: 1.0,
               body: '#8b7b68', wing: '#6e604f', breast: '#7a3a26', head: '#1d6e3c', beak: '#e9b21a', feet: '#f08a24', ring: true },
-  duckling: { name: 'DUCKLING', size: 0.42, hunger: 1, speed: 2.5, dmg: 3,  atk: 0.7, r: 0.2,  pitch: 1.8,
+  duckling: { name: 'DUCKLING', size: 0.42, hunger: 1, speed: 2.5, dmg: 3,  atk: 0.7, r: 0.2,  stand: 1.6,  pitch: 1.8,
               body: '#f6d43c', wing: '#e3b822', breast: '#fae37a', head: '#f6d43c', beak: '#f08a24', feet: '#f08a24', big: true },
-  goose:    { name: 'GOOSE',    size: 0.92, hunger: 7, speed: 1.9, dmg: 14, atk: 1.1, r: 0.33, pitch: 0.6,
-              body: '#8a7c6a', wing: '#6b5f50', breast: '#cfc5b4', head: '#1b1b1b', beak: '#4a4a4a', feet: '#2a2a2a', goose: true },
+  goose:    { name: 'GOOSE',    size: 0.92, hunger: 7, speed: 1.9, dmg: 14, atk: 1.1, r: 0.33, stand: 1.0, pitch: 0.6,
+              body: '#8a7c6a', wing: '#6b5f50', breast: '#cfc5b4', head: '#1b1b1b', beak: '#4a4a4a', feet: '#2a2a2a', goose: true, gunner: true }, // fires 3-round bursts of small feathers
   // miniboss: big black-and-white Muscovy with a warty red face. Hisses, keeps its distance, fires feathers.
-  muscovy:  { name: 'MUSCOVY GUNNER', size: 1.0, hunger: 12, speed: 1.5, dmg: 10, atk: 1.0, r: 0.34, pitch: 0.5,
+  muscovy:  { name: 'MUSCOVY GUNNER', size: 1.0, hunger: 12, speed: 1.5, dmg: 10, atk: 1.0, r: 0.34, stand: 0.9, pitch: 0.5,
               body: '#1f2523', wing: '#2b3d34', breast: '#e9e6df', head: '#f0ede6', beak: '#d98a8a', feet: '#8a7a50', muscovy: true, boss: true }
 };
 function heart(g, x, y, s, col) {
@@ -1176,9 +1178,10 @@ function updateProjectiles(dt) {
     if (p.z <= 0.02) { burst(p.x, p.y, 0.03, 4); proj.splice(i, 1); }
   }
 }
-function fireFeather(d) {
-  const a = Math.atan2(P.y - d.y, P.x - d.x) + (rand() - 0.5) * 0.08, s = 6.5;
-  feathers.push({ x: d.x + Math.cos(a) * 0.4, y: d.y + Math.sin(a) * 0.4, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0 });
+function fireFeather(d, small) {
+  const a = Math.atan2(P.y - d.y, P.x - d.x) + (rand() - 0.5) * (small ? 0.03 : 0.08), s = small ? 7.5 : 6.5;
+  feathers.push({ x: d.x + Math.cos(a) * 0.4, y: d.y + Math.sin(a) * 0.4, vx: Math.cos(a) * s, vy: Math.sin(a) * s, age: 0,
+                  small, dmg: small ? 2 + (level >= 6 ? 1 : 0) : 7 + (level >> 2) });
   sfx.fwip(0.2 / (1 + Math.hypot(P.x - d.x, P.y - d.y) * 0.15));
 }
 function updateFeathers(dt) {
@@ -1188,7 +1191,7 @@ function updateFeathers(dt) {
     for (let s = 0; s < 2 && !gone; s++) {
       f.x += f.vx * dt / 2; f.y += f.vy * dt / 2;
       if (tileAt(f.x, f.y) || props.some(q => q.solid && q.kind === 'tree' && Math.hypot(q.x - f.x, q.y - f.y) < 0.25)) gone = true;
-      else if (Math.hypot(f.x - P.x, f.y - P.y) < 0.32) { hurtPlayer(7 + (level >> 2)); gone = true; }
+      else if (Math.hypot(f.x - P.x, f.y - P.y) < 0.32) { hurtPlayer(f.dmg); gone = true; }
     }
     if (gone) feathers.splice(i, 1);
   }
@@ -1233,7 +1236,7 @@ function updateDucks(dt) {
         if (bx >= 0) { tx = bx + 0.5; ty = by + 0.5; }
       }
       const ddx = tx - d.x, ddy = ty - d.y, dd = Math.hypot(ddx, ddy);
-      if (dist > 0.62 && dd > 0.01) { mvx = ddx / dd; mvy = ddy / dd; }
+      if ((dist > T.stand || !d.los) && dd > 0.01) { mvx = ddx / dd; mvy = ddy / dd; }
       if (T.boss && d.los && dist < 13) {
         const ux = dx / dist, uy = dy / dist;
         d.strafeT -= dt; if (d.strafeT <= 0) { d.strafeT = 1.2 + rand() * 1.8; d.strafe = rand() < .5 ? -1 : 1; }
@@ -1246,9 +1249,17 @@ function updateDucks(dt) {
           d.fireT = d.burst > 0 ? 0.18 : Math.max(0.8, 1.7 - level * 0.06) + rand() * 0.5;
         }
       }
+      if (T.gunner && d.los && dist > 1.6 && dist < 10) { // goose: tight 3-round rifle bursts while it charges in
+        d.fireT = (d.fireT ?? 1 + rand() * 1.5) - dt;
+        if (d.fireT <= 0) {
+          if (!(d.burst > 0)) d.burst = 3;
+          fireFeather(d, true); d.burst--; d.atkT = 0.2;
+          d.fireT = d.burst > 0 ? 0.1 : Math.max(1.8, 3.2 - level * 0.08) + rand() * 0.8;
+        }
+      }
       // attack
       d.atkCd -= dt;
-      if (dist < 0.72 && d.los && d.atkCd <= 0) { d.atkCd = T.atk; d.atkT = 0.3; hurtPlayer(T.dmg); }
+      if (dist < T.stand + 0.2 && d.los && d.atkCd <= 0) { d.atkCd = T.atk; d.atkT = 0.3; hurtPlayer(T.dmg); }
     } else {
       d.wt -= dt;
       if (d.wt <= 0) { d.wt = 1 + rand() * 2.5; d.wa = rand() * 6.28; d.idle = rand() < 0.35; }
@@ -1268,7 +1279,7 @@ function updateDucks(dt) {
       const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.T.r + b.T.r;
       if (d < min && d > 0.001) { const push = (min - d) / 2 / d; moveEnt(a, -dx * push, -dy * push, a.T.r); moveEnt(b, dx * push, dy * push, b.T.r); }
     }
-    const dx = a.x - P.x, dy = a.y - P.y, d = Math.hypot(dx, dy), min = a.T.r + 0.26;
+    const dx = a.x - P.x, dy = a.y - P.y, d = Math.hypot(dx, dy), min = Math.max(a.T.r + 0.26, a.T.stand - 0.12);
     if (d < min && d > 0.001) moveEnt(a, dx / d * (min - d), dy / d * (min - d), a.T.r);
   }
 }
@@ -1371,7 +1382,7 @@ function renderView() {
     addS(duckImg[d.type][pose], d.x, d.y, d.T.size, d.z + swim, d.state === 'fed');
   }
   for (const p of proj) addS(img.crumb, p.x, p.y, 0.12, p.z - 0.06, true);
-  for (const f of feathers) addS(img.feather, f.x, f.y, 0.3, 0.3, true);
+  for (const f of feathers) addS(img.feather, f.x, f.y, f.small ? 0.17 : 0.3, f.small ? 0.17 : 0.3, true);
   for (const p of props) addS(img[p.kind], p.x, p.y, p.kind === 'tree' ? 1.5 : p.kind === 'reeds' ? 0.6 : p.kind === 'bush' ? 0.45 : 0.4, 0);
   list.sort((a, b) => b.tY - a.tY);
   for (const s of list) drawSprite(s);
