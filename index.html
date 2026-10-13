@@ -1249,11 +1249,11 @@ function updateDucks(dt) {
         }
       }
       if (T.gunner && d.los && dist > 1.6 && dist < 10) { // goose: tight 3-round rifle bursts while it charges in
-        d.fireT = (d.fireT ?? 1 + rand() * 1.5) - dt;
+        d.fireT = (d.fireT ?? 0.5 + rand() * 0.8) - dt;
         if (d.fireT <= 0) {
           if (!(d.burst > 0)) d.burst = 3;
           fireFeather(d, true); d.burst--; d.atkT = 0.2;
-          d.fireT = d.burst > 0 ? 0.1 : Math.max(1.8, 3.2 - level * 0.08) + rand() * 0.8;
+          d.fireT = d.burst > 0 ? 0.1 : Math.max(1.0, 2.0 - level * 0.06) + rand() * 0.6;
         }
       }
       // attack
