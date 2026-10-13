@@ -12,7 +12,7 @@ Live at: https://dhfm91.github.io/quack/
 
 **Desktop:** WASD to move, mouse to look, click (or Space) to throw bread, Shift to run, Tab or M for the automap.
 
-**Mobile:** left side of the screen is a move joystick, drag on the right side to look, THROW button to throw, MAP button for the automap.
+**Mobile:** left side of the screen is a move joystick, drag on the right side to look, THROW button to throw. The automap is always shown in the free space around the controls.
 
 ## The ducks
 
