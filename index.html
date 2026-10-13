@@ -1023,6 +1023,7 @@ function newGame() { P.health = 100; P.ammo = 24; score = 0; justAdded = null; s
 function hurtPlayer(n) {
   if (state !== 'play') return;
   P.health = Math.max(0, P.health - n); P.hurtT = 0.45; P.flash = 0.5; P.flashCol = '255,0,0';
+  P.flinchUntil = performance.now() + 700; // hands drop out of the way so you can see what's hitting you
   sfx.hurt();
   if (P.health <= 0) { state = 'dead'; stateT = 0; sfx.die(); deadChecked = false; lbPending = refreshBoard().finally(() => { lbPending = null; }); }
 }
@@ -1446,7 +1447,11 @@ function drawHands() {
     else if (t < 0.55) { const k = (t - 0.3) / 0.25; tx = -0.04 + 0.2 * k; ty = 0.06 - 0.16 * k; rot = -0.1 + 0.3 * k; }
     else { const e = 1 - (t - 0.55) / 0.45; tx = 0.16 * e; ty = -0.1 * e; rot = 0.2 * e; }
   }
-  handDrop += ((has ? 0 : 1) - handDrop) * 0.15; // out of bread: hands slide fully off screen
+  // out of bread: hands slide fully off screen. Taking a hit: they flinch down most of the way,
+  // so whatever is pecking you is in plain view, then come back up once it stops.
+  const flinch = performance.now() < (P.flinchUntil || 0);
+  const goal = has ? (flinch ? 0.42 : 0) : 1;
+  handDrop += (goal - handDrop) * (goal > handDrop ? 0.35 : 0.1);
   if (handDrop > 0.98) return;
   const low = handDrop * h * 1.2;
   // sizes and offsets are in view-heights so the layout holds on any screen shape
