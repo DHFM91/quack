@@ -62,8 +62,26 @@ function audio() {
       master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
     } catch (e) { AC = null; }
   }
-  if (AC && AC.state === 'suspended') AC.resume();
+  if (AC && AC.state !== 'running') AC.resume().catch(() => {});
 }
+/* iPhone Safari only lets audio start from a "finished" gesture (touchend / click), not from the
+   touchstart/pointerdown the game uses for controls. So on every such gesture we resume the
+   context and play one silent sample, which is what actually unlocks sound on iOS. The music
+   clock is re-synced the moment the context starts running so the song plays from the top. */
+let audioUnlocked = false;
+function unlockAudio() {
+  audio();
+  if (!AC) return;
+  if (!audioUnlocked) {
+    try { const b = AC.createBuffer(1, 1, 22050), src = AC.createBufferSource(); src.buffer = b; src.connect(AC.destination); src.start(0); } catch (e) {}
+    if (!AC.onstatechange) AC.onstatechange = () => {
+      if (AC.state === 'running' && !audioUnlocked) { audioUnlocked = true; if (music.playing) { music.step = 0; music.next = AC.currentTime + 0.05; } }
+    };
+    if (AC.state === 'running') audioUnlocked = true;
+  }
+}
+for (const ev of ['touchend', 'click', 'pointerup', 'keydown']) window.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && AC && AC.state !== 'running') AC.resume().catch(() => {}); });
 function tone({ type = 'square', f0 = 440, f1 = f0, dur = 0.1, vol = 0.2, filt = 0, q = 1, delay = 0 }) {
   if (!AC || vol < 0.003) return;
   const t = AC.currentTime + delay;
