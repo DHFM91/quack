@@ -949,7 +949,10 @@ ov.addEventListener('pointermove', e => {
   if (e.pointerType === 'mouse') {
     mouse.inside = true;
     mouse.x = e.clientX / Math.max(1, ov.clientWidth);
-    if (!locked && noLock && state === 'play' && mouse.lastX !== null) P.a += clamp(e.clientX - mouse.lastX, -120, 120) * FREE_SENS;
+    if (!locked && noLock && state === 'play' && mouse.lastX !== null) {
+      const dx = typeof e.movementX === 'number' ? e.movementX : e.clientX - mouse.lastX;
+      if (Math.abs(dx) < 800) P.a += dx * FREE_SENS; // full speed for fast swipes; only drop glitch spikes
+    }
     mouse.lastX = e.clientX;
     return;
   }
@@ -975,8 +978,13 @@ ov.addEventListener('pointercancel', endPointer);
 ov.addEventListener('lostpointercapture', endPointer);
 // releasing the mouse button anywhere (even outside the game) always stops throwing
 window.addEventListener('mouseup', e => { if (e.button === 0) fireHeld = false; });
+// Mouse look. The browser bundles a fast, heavy-handed swipe into a few big movement events,
+// so they're applied in full (the old per-event cap made hard swipes feel sticky). Only absurd
+// one-off jumps, a known browser glitch, are thrown away.
 document.addEventListener('mousemove', e => {
-  if (locked && state === 'play') P.a += clamp(e.movementX || 0, -150, 150) * LOCK_SENS;
+  if (!locked || state !== 'play') return;
+  const dx = e.movementX || 0;
+  if (Math.abs(dx) < 1500) P.a += dx * LOCK_SENS;
 });
 function lockFailed() { if (!everLocked) noLock = true; } // never had lock here: switch to free look for good
 function requestLock() {
