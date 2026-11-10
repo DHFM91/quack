@@ -1021,6 +1021,7 @@ function edgeTurn(dt) {
    Shared JSON bin (same setup as Freddy Flames). Entries are [initials, points, level].
    Ranking: highest level reached first, points break ties. */
 const LB_URL = 'https://json.extendsclass.com/bin/a12a9d4d8385';
+const lbReadJson = async r => { const t = await r.text(), i = t.search(/<!doctype|<html/i); return JSON.parse(i < 0 ? t : t.slice(0, i)); }; // the score host sometimes tacks a web page onto its reply; read only the JSON part
 const LB_SIZE = 10, LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ.-!';
 const DUCK_POINTS = { duckling: 100, mallard: 300, goose: 800, muscovy: 3000 };
 let score = 0, hiscores = loadHi(), lbOnline = false, lbPending = null, justAdded = null, entry = null, deadChecked = false;
@@ -1039,11 +1040,11 @@ async function lbRequest(opts) {
   finally { clearTimeout(t); }
 }
 async function refreshBoard() {
-  try { hiscores = cleanBoard(await (await lbRequest({})).json()); lbOnline = true; saveHi(); } catch (e) { lbOnline = false; }
+  try { hiscores = cleanBoard(await lbReadJson(await lbRequest({}))); lbOnline = true; saveHi(); } catch (e) { lbOnline = false; }
 }
 async function submitScore(n, sc, lv) {
   let list = hiscores;
-  try { list = cleanBoard(await (await lbRequest({})).json()); lbOnline = true; } catch (e) { lbOnline = false; }
+  try { list = cleanBoard(await lbReadJson(await lbRequest({}))); lbOnline = true; } catch (e) { lbOnline = false; }
   hiscores = cleanBoard(list.concat([[n, sc, lv]])); justAdded = [n, sc, lv]; saveHi();
   if (!lbOnline) return;
   try { await lbRequest({ method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(hiscores) }); } catch (e) { lbOnline = false; }
